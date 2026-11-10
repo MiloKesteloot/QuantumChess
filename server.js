@@ -12,7 +12,7 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
 };
-const ALLOWED = /^\/(index\.html|app\.js|style\.css|shared\/[a-z-]+\.js)$/;
+const ALLOWED = /^\/(index\.html|style\.css|(?!server\.js)[a-z-]+\.js|shared\/[a-z-]+\.js)$/;
 
 http.createServer((req, res) => {
   const url = req.url.split('?')[0];

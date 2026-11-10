@@ -1,5 +1,6 @@
 import * as R from './shared/rules.js';
 import { Room, randomCode, normalizeCode } from './shared/room.js';
+import { setupHelp, miniBoard } from './help.js';
 
 const $ = (s) => document.querySelector(s);
 const boardEl = $('#board');
@@ -34,6 +35,10 @@ const ui = {
   pending: false,
   connected: false,
   isHost: false,
+  aiColor: null,
+  aiLevel: 'medium',
+  aiThinking: false,
+  aiReq: 0,
   notes: [], // per ply: { worlds: [before, after], effects: [...] } for the move log
 };
 
@@ -49,6 +54,7 @@ function result() {
 function canAct() {
   if (result() || ui.pending) return false;
   if (ui.mode === 'local') return true;
+  if (ui.mode === 'ai') return ui.game.turn !== ui.aiColor && !ui.aiThinking;
   return ui.mode === 'online' && ui.me === ui.game.turn && ui.connected;
 }
 
@@ -245,7 +251,7 @@ function computePreview() {
     ui.preview = r;
     return;
   }
-  r.effects = R.describeChange(ui.game, r.state, p.piece);
+  r.effects = R.describeChange(ui.game, r.state, p.piece, { paths: p.paths });
   ui.preview = r;
 }
 
@@ -362,6 +368,7 @@ function commit() {
   ui.history.push(before);
   announce(before, after); // records the log note, so it must run before rendering
   setGame(after);
+  maybeAiMove();
 }
 
 function setGame(state) {
@@ -430,6 +437,7 @@ function render() {
   renderPlan();
   renderLog();
   renderControls();
+  renderActionBar();
 }
 
 function stripHTML(color) {
@@ -447,7 +455,8 @@ function stripHTML(color) {
     const seated = ui.roomInfo.seated[color];
     conn = `<span class="${on ? 'dot-on' : 'dot-off'}" title="${on ? 'connected' : seated ? 'disconnected' : 'waiting for player'}"></span>`;
   }
-  const you = ui.mode === 'online' && ui.me === color ? ' (you)' : '';
+  const you = ui.mode === 'online' && ui.me === color ? ' (you)'
+    : ui.mode === 'ai' ? (color === ui.aiColor ? ` (computer, ${ui.aiLevel})` : ' (you)') : '';
   const turn = !res && ui.game.turn === color ? '<span class="turn">to move</span>' : '';
   return `<span class="chip ${color === R.BLACK ? 'black' : 'red'}"></span>${conn}
     <span class="who">${R.colorName(color)}${you}</span>
@@ -466,6 +475,7 @@ function renderStatus() {
   if (res) turnline = 'Game over';
   else if (ui.mode === 'online' && ui.me === null) turnline = `Spectating · ${R.colorName(ui.game.turn)} to move`;
   else if (ui.mode === 'online') turnline = ui.me === ui.game.turn ? 'Your move' : `Waiting for ${R.colorName(ui.game.turn)}…`;
+  else if (ui.mode === 'ai') turnline = ui.game.turn === ui.aiColor ? 'Computer is thinking…' : 'Your move';
   else turnline = `${R.colorName(ui.game.turn)} to move`;
   const chip = `<span class="strip"><span class="chip ${ui.game.turn === R.BLACK ? 'black' : 'red'}"></span></span>`;
   $('#status').innerHTML = `
@@ -535,7 +545,7 @@ function renderPlan() {
   let body;
   if (result()) body = '<p class="hint">The game is over.</p>';
   else if (!canAct()) {
-    body = ui.pending ? '<p class="hint">Sending move…</p>' : '<p class="hint">Waiting for the other player.</p>';
+    body = ui.pending ? '<p class="hint">Sending move…</p>' : (ui.mode === 'ai' ? '<p class="hint">The computer is thinking…</p>' : '<p class="hint">Waiting for the other player.</p>');
   } else if (!p) {
     body = `<p class="hint">Click one of your pieces, then where it should go.
       <b>Click that square again</b> to play the move, or pick a second square first to split the piece.</p>`;
@@ -619,6 +629,39 @@ function renderPlan() {
   }
 }
 
+// Bottom bar on phones: what the planned move does, and a big button to play it.
+function renderActionBar() {
+  const bar = $('#actionBar');
+  const p = ui.plan;
+  const show = !!p && ui.mode !== null && canAct() && !result();
+  bar.hidden = !show;
+  document.body.classList.toggle('has-bar', show);
+  if (!show) return;
+  const pv = ui.preview;
+  const label = R.labelOf(p.piece);
+  let line, extra = '';
+  if (!p.paths.length) {
+    line = `<b>${label}</b> selected · tap where it should go`;
+  } else if (pv?.ok) {
+    const W = ui.sum.W, W2 = pv.state.worlds.length;
+    line = `<b>${esc(R.fmtMove({ piece: p.piece, paths: p.paths }))}</b>${W !== W2 ? ` · worlds ${W} → ${W2}` : ''}`;
+    if (pv.effects.length) extra = `<div class="ab-effects">${esc(pv.effects.join(' · '))}</div>`;
+  } else {
+    line = `<b>${label}</b>`;
+    if (pv?.error) extra = `<div class="ab-err">${esc(pv.error)}</div>`;
+  }
+  bar.innerHTML = `<div class="ab-line">${line}</div>${extra}
+    <div class="ab-buttons">
+      <button class="btn primary" data-ab="play" ${pv?.ok ? '' : 'disabled'}>Play move</button>
+      ${p.paths.length ? '<button class="btn" data-ab="undo">Undo step</button>' : ''}
+      <button class="btn subtle" data-ab="clear">Cancel</button>
+    </div>`;
+  bar.querySelector('[data-ab="play"]').onclick = commit;
+  const undo = bar.querySelector('[data-ab="undo"]');
+  if (undo) undo.onclick = undoPlanStep;
+  bar.querySelector('[data-ab="clear"]').onclick = () => (clearPlan(), render());
+}
+
 function renderLog() {
   const el = $('#log');
   const moves = ui.game.moves;
@@ -655,7 +698,7 @@ function renderControls() {
   const el = $('#controls');
   const res = result();
   const btns = [];
-  if (ui.mode === 'local') {
+  if (ui.mode === 'local' || ui.mode === 'ai') {
     btns.push(`<button class="btn" id="undoBtn" ${ui.history.length ? '' : 'disabled'}>Undo</button>`);
     btns.push('<button class="btn" id="newBtn">New game</button>');
   } else if (ui.me !== null) {
@@ -675,12 +718,20 @@ function renderControls() {
   };
   on('#undoBtn', () => {
     if (!ui.history.length) return;
-    setGame(ui.history.pop());
+    cancelAi();
+    let prev = ui.history.pop();
+    // Against the computer, undo back to your own turn.
+    while (ui.mode === 'ai' && prev.turn === ui.aiColor && ui.history.length) prev = ui.history.pop();
+    setGame(prev);
+    maybeAiMove();
   });
   on('#newBtn', () => {
     if (ui.game.ply && !confirm('Start a new game?')) return;
+    cancelAi();
     ui.history = [];
+    ui.notes = [];
     setGame(R.initialState());
+    maybeAiMove();
   });
   on('#drawBtn', () => sendNet({ t: 'offerDraw' }));
   on('#resignBtn', () => confirm('Resign this game?') && sendNet({ t: 'resign' }));
@@ -1069,6 +1120,7 @@ function enterGame(mode) {
 
 function showLobby() {
   teardownNet();
+  cancelAi();
   Object.assign(ui, {
     mode: null, game: R.initialState(), history: [], plan: null, preview: null, isHost: false, notes: [],
     me: null, room: null, roomInfo: null, pending: false, connected: false, flipped: false,
@@ -1078,6 +1130,94 @@ function showLobby() {
   $('#lobby').hidden = false;
   $('#lobbyError').textContent = '';
   lobbyStatus('');
+}
+
+// ================================================================ vs computer
+let aiWorker = null;
+let aiWorkerFailed = false;
+const aiWaiters = new Map();
+
+function cancelAi() {
+  ui.aiReq = (ui.aiReq || 0) + 1; // any in-flight answer is now stale
+  ui.aiThinking = false;
+}
+
+function askAi(moves, level) {
+  const id = ++ui.aiReq;
+  if (!aiWorker && !aiWorkerFailed) {
+    try {
+      aiWorker = new Worker(new URL('./ai-worker.js', import.meta.url), { type: 'module' });
+      aiWorker.onmessage = (e) => {
+        const w = aiWaiters.get(e.data.id);
+        if (!w) return;
+        aiWaiters.delete(e.data.id);
+        e.data.error ? w.reject(new Error(e.data.error)) : w.resolve(e.data.move);
+      };
+      aiWorker.onerror = () => {
+        aiWorkerFailed = true;
+        aiWorker = null;
+        for (const w of aiWaiters.values()) w.fallback();
+        aiWaiters.clear();
+      };
+    } catch {
+      aiWorkerFailed = true;
+    }
+  }
+  // Fallback: think on the main thread (the page pauses briefly while it does).
+  const onMainThread = () => import('./shared/ai.js').then(({ chooseMove }) =>
+    new Promise((res) => setTimeout(() => res(chooseMove(R.replay(moves), level)), 30)));
+  if (!aiWorker) return { id, promise: onMainThread() };
+  const promise = new Promise((resolve, reject) => {
+    aiWaiters.set(id, { resolve, reject, fallback: () => onMainThread().then(resolve, reject) });
+    aiWorker.postMessage({ id, moves, level });
+  });
+  return { id, promise };
+}
+
+function maybeAiMove() {
+  if (ui.mode !== 'ai' || ui.game.result || ui.game.turn !== ui.aiColor || ui.aiThinking) return;
+  ui.aiThinking = true;
+  render();
+  const started = Date.now();
+  const { id, promise } = askAi(ui.game.moves, ui.aiLevel);
+  promise.then((move) => {
+    if (id !== ui.aiReq || ui.mode !== 'ai') return; // cancelled (undo, new game, left)
+    const wait = Math.max(0, 500 - (Date.now() - started)); // don't reply instantly
+    setTimeout(() => {
+      if (id !== ui.aiReq || ui.mode !== 'ai') return;
+      ui.aiThinking = false;
+      const r = move && R.applyQuantumMove(ui.game, move);
+      if (!r || !r.ok) {
+        toast('The computer could not find a move.', 3000);
+        render();
+        return;
+      }
+      const before = ui.game;
+      ui.history.push(before);
+      announce(before, r.state);
+      setGame(r.state);
+    }, wait);
+  }).catch((e) => {
+    if (id !== ui.aiReq) return;
+    console.error(e);
+    ui.aiThinking = false;
+    toast('The computer ran into a problem.', 3000);
+    render();
+  });
+}
+
+function startAi() {
+  const level = $('#aiLevel').value;
+  let color = $('#aiColor').value;
+  if (color === 'random') color = Math.random() < 0.5 ? 'black' : 'red';
+  savePref('qc-ai-level', level);
+  showLobby();
+  ui.aiLevel = level;
+  ui.aiColor = color === 'black' ? R.RED : R.BLACK; // the computer plays the other side
+  ui.flipped = ui.aiColor === R.RED; // your pieces at the bottom
+  enterGame('ai');
+  render();
+  maybeAiMove();
 }
 
 function startLocal() {
@@ -1105,12 +1245,20 @@ function openRoom(code) {
 }
 
 $('#localBtn').onclick = startLocal;
+$('#aiBtn').onclick = startAi;
+$('#aiLevel').value = loadPref('qc-ai-level', 'medium');
 $('#createBtn').onclick = createOnline;
 $('#joinForm').onsubmit = (e) => {
   e.preventDefault();
   openRoom($('#joinCode').value);
 };
-$('#rulesBtn').onclick = () => $('#rulesDlg').showModal();
+const help = setupHelp($('#rulesDlg'));
+$('#rulesBtn').onclick = () => help.open();
+$('#heroHelpBtn').onclick = () => help.open();
+$('#heroDiagram').append(miniBoard({
+  rows: [2, 4], cols: [1, 4],
+  pieces: [[2, 1, 'b'], [3, 2, 'b', { frac: 0.5 }], [3, 4, 'b', { frac: 0.5 }], [4, 1, 'r'], [4, 3, 'r']],
+}));
 for (const b of document.querySelectorAll('[data-close]')) b.onclick = () => b.closest('dialog').close();
 for (const d of document.querySelectorAll('dialog')) {
   d.addEventListener('click', (e) => {

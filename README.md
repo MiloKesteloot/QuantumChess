@@ -1,6 +1,6 @@
 # Quantum Checkers
 
-Checkers where a piece can make two moves at once and exist in superposition until the game forces it to collapse. You can play two players on one device, or online with a friend through a link.
+Checkers where a piece can make two moves at once and exist in superposition until the game forces it to collapse. You can play against the computer, two players on one device, or online with a friend through a link. It works on phones, tablets and desktops.
 
 It's a static site, so there's no server to run or pay for.
 
@@ -12,6 +12,7 @@ It's a static site, so there's no server to run or pay for.
 
 ## Playing
 
+- **Vs computer:** pick a difficulty and your color, then click **Play the computer**. Easy makes mistakes, Medium looks a few moves ahead, and Hard thinks for up to about two seconds per move. The computer splits and collapses pieces too. Undo takes you back to your previous turn.
 - **Same device:** click **Start local game**.
 - **Online:** click **Create online game**, then **Copy invite link** and send it to a friend. Opening the link joins the game. Anyone who opens it after both seats are taken can watch.
 
@@ -26,7 +27,7 @@ How online play works: the creator's browser hosts the game, and the two browser
 
 ```sh
 npm start   # http://localhost:3000  (any static file server works too)
-npm test    # rules engine and room tests
+npm test    # rules engine, room and AI tests
 ```
 
 Requires Node 18+. There are no dependencies to install.
@@ -62,7 +63,10 @@ Notation uses the standard 1–32 square numbers. `B10 10-14 | 10-15` means piec
 | Path | What it is |
 | --- | --- |
 | `index.html`, `style.css`, `app.js` | The game page and UI. No build step. |
+| `help.js` | The illustrated How to play guide (board diagrams are defined as small specs at the top). |
+| `ai-worker.js` | Runs the computer opponent in the background so the page stays responsive. |
 | `shared/rules.js` | Rules engine: worlds, classical move generation, quantum moves, collapse. |
+| `shared/ai.js` | Computer opponent: alpha-beta search over quantum moves, scoring expected material across worlds. |
 | `shared/room.js` | Online room logic (seats, turns, resign, draws, rematch). Runs in the host's browser. |
 | `server.js` | Tiny local dev server. Not used on GitHub Pages. |
-| `test/` | Engine and room tests, including a fuzz test that checks every surviving world is a legal classical game. |
+| `test/` | Engine, room and AI tests, including a fuzz test that checks every surviving world is a legal classical game. |

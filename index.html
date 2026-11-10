@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1120">
   <title>Quantum Checkers</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='12' cy='16' r='9' fill='%23d23b3b'/%3E%3Ccircle cx='20' cy='16' r='9' fill='%235ee6ff' fill-opacity='.55'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="./style.css">
@@ -14,6 +15,35 @@
   </header>
 
   <main id="lobby" class="lobby">
+    <section class="hero">
+      <div id="heroDiagram" class="hero-diagram" aria-hidden="true"></div>
+      <div class="hero-text">
+        <h2>Checkers where a piece can be in two places at once.</h2>
+        <p class="muted">Split your pieces, keep your opponent guessing, and watch the board collapse into one real game.</p>
+        <button id="heroHelpBtn" class="btn">See how it works</button>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Vs computer</h2>
+      <p class="muted">Practice against an AI that splits and collapses too.</p>
+      <div class="field-row">
+        <label class="field">Difficulty
+          <select id="aiLevel">
+            <option value="easy">Easy</option>
+            <option value="medium" selected>Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
+        <label class="field">You play
+          <select id="aiColor">
+            <option value="black">Black (first)</option>
+            <option value="red">Red</option>
+            <option value="random">Random</option>
+          </select>
+        </label>
+      </div>
+      <button id="aiBtn" class="btn primary">Play the computer</button>
+    </section>
     <section class="card">
       <h2>Same device</h2>
       <p class="muted">Two players take turns on one screen.</p>
@@ -25,7 +55,7 @@
       <label class="field">Your color
         <select id="colorPref">
           <option value="random">Random</option>
-          <option value="black">Black (moves first)</option>
+          <option value="black">Black (first)</option>
           <option value="red">Red</option>
         </select>
       </label>
@@ -59,32 +89,13 @@
     </aside>
   </main>
 
-  <dialog id="rulesDlg" class="dlg">
+  <dialog id="rulesDlg" class="dlg help">
     <div class="dlg-head"><h2>How to play</h2><button class="btn subtle" data-close aria-label="Close">✕</button></div>
-    <div class="rules">
-      <p>Checkers on an 8×8 board, plus superposition. Men move diagonally forward and become kings on the far row. Jumping is <b>optional</b>, and you can stop a multi-jump after any hop.</p>
-      <h3>Splitting</h3>
-      <p>Instead of one move, a piece can make <b>two moves at once</b> and end up in two places. The game now tracks two possible <b>worlds</b>, one for each choice. A piece can be in at most 4 places.</p>
-      <h3>Collapse</h3>
-      <p>Every move must be a legal, ordinary checkers move in each world it applies to. Worlds where it isn't are deleted. That's how pieces collapse:</p>
-      <ul>
-        <li><b>Jumping a ghost</b> proves it was really there. It's captured, and its other ghosts vanish.</li>
-        <li><b>Moving onto a ghost's square</b> proves it wasn't there.</li>
-        <li><b>Moving a superposed piece</b>: each ghost can move (or split again). Any ghost you don't move is ruled out, since every world needs its piece to move.</li>
-      </ul>
-      <h3>Winning</h3>
-      <p>You lose when you have no legal move in any world. Draw after 40 moves each of king-only shuffling in every world, or by agreement.</p>
-      <h3>The guarantee</h3>
-      <p>Every surviving world is a normal game of checkers where each turn one piece made one legal move. Open <b>Timelines</b> at any point to step through one.</p>
-      <h3>Controls</h3>
-      <ul>
-        <li>Click a piece, then a destination. <b>Click the destination again</b> to play the move.</li>
-        <li>To <b>split</b>, click a second destination before confirming, then click either destination again.</li>
-        <li>For a multi-jump, click each landing square in turn, then click the last one again.</li>
-        <li>For a piece that's already split, click each ghost and give it a destination. Ghosts you don't move are ruled out.</li>
-        <li>The panel shows what your move will collapse before you confirm. <kbd>Enter</kbd> also plays it, <kbd>Backspace</kbd> takes back a step, <kbd>Esc</kbd> clears. Hold <b>Preview</b> to see the result.</li>
-        <li>Hover (or tap) a ghost to highlight its other ghosts and see what else would be true if it's the real one. A <b>♛?</b> crown means it's a king in only some worlds.</li>
-      </ul>
+    <div class="help-body"></div>
+    <div class="help-nav">
+      <button class="btn help-prev" type="button">Back</button>
+      <div class="help-dots"></div>
+      <button class="btn help-next" type="button">Next</button>
     </div>
   </dialog>
 
@@ -102,6 +113,7 @@
     </div>
   </dialog>
 
+  <div id="actionBar" class="action-bar" hidden></div>
   <div id="toast" class="toast" role="status" hidden></div>
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script type="module" src="./app.js"></script>
