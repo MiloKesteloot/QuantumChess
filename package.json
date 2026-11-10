@@ -1,0 +1,14 @@
+{
+  "name": "quantum-checkers",
+  "version": "0.1.0",
+  "description": "Checkers where pieces can split into superposition, with local and online multiplayer.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

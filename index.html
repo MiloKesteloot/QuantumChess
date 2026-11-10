@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quantum Checkers</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='12' cy='16' r='9' fill='%23d23b3b'/%3E%3Ccircle cx='20' cy='16' r='9' fill='%235ee6ff' fill-opacity='.55'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1><span class="q">Quantum</span> Checkers</h1>
+    <button id="rulesBtn" class="btn subtle">How to play</button>
+  </header>
+
+  <main id="lobby" class="lobby">
+    <section class="card">
+      <h2>Same device</h2>
+      <p class="muted">Two players take turns on one screen.</p>
+      <button id="localBtn" class="btn primary">Start local game</button>
+    </section>
+    <section class="card">
+      <h2>Online</h2>
+      <p class="muted">Create a game and send the link to a friend.</p>
+      <label class="field">Your color
+        <select id="colorPref">
+          <option value="random">Random</option>
+          <option value="black">Black (moves first)</option>
+          <option value="red">Red</option>
+        </select>
+      </label>
+      <button id="createBtn" class="btn primary">Create online game</button>
+      <div class="divider"><span>or join</span></div>
+      <form id="joinForm" class="join">
+        <input id="joinCode" maxlength="5" placeholder="CODE" autocomplete="off" spellcheck="false" aria-label="Game code">
+        <button class="btn">Join</button>
+      </form>
+      <p id="lobbyStatus" class="muted" role="status"></p>
+      <p id="lobbyError" class="error" role="alert"></p>
+    </section>
+  </main>
+
+  <main id="game" class="game" hidden>
+    <div class="board-col">
+      <div id="stripTop" class="strip"></div>
+      <div id="board" class="board" aria-label="Board"></div>
+      <div id="stripBottom" class="strip"></div>
+      <div id="hint" class="hint-line" aria-live="polite"></div>
+    </div>
+    <aside class="side">
+      <div id="status" class="panel status"></div>
+      <div id="roomPanel" class="panel room" hidden></div>
+      <div id="planPanel" class="panel plan"></div>
+      <div class="panel">
+        <h3>Moves</h3>
+        <ol id="log" class="log"></ol>
+      </div>
+      <div id="controls" class="controls"></div>
+    </aside>
+  </main>
+
+  <dialog id="rulesDlg" class="dlg">
+    <div class="dlg-head"><h2>How to play</h2><button class="btn subtle" data-close aria-label="Close">✕</button></div>
+    <div class="rules">
+      <p>Normal American checkers (8×8, captures are mandatory, multi-jumps must be finished, men become kings on the far row), plus superposition.</p>
+      <h3>Splitting</h3>
+      <p>Instead of one move, a piece can make <b>two moves at once</b> and end up in two places. The game now tracks two possible <b>worlds</b>, one for each choice. A piece can be in at most 4 places.</p>
+      <h3>Collapse</h3>
+      <p>Every move must be a legal, ordinary checkers move in each world it applies to. Worlds where it isn't are deleted. That's how pieces collapse:</p>
+      <ul>
+        <li><b>Jumping a ghost</b> proves it was really there. It's captured, and its other ghosts vanish.</li>
+        <li><b>Moving onto a ghost's square</b> proves it wasn't there.</li>
+        <li><b>Ignoring a capture</b> that exists in only some worlds proves those worlds weren't real, because captures are mandatory.</li>
+        <li><b>Moving a superposed piece</b>: each ghost can move (or split again). Any ghost you don't move is ruled out, since every world needs its piece to move.</li>
+      </ul>
+      <h3>Winning</h3>
+      <p>You lose when you have no legal move in any world. Draw after 40 moves each of king-only shuffling in every world, or by agreement.</p>
+      <h3>The guarantee</h3>
+      <p>Every surviving world is a normal game of checkers where each turn one piece made one legal move. Open <b>Timelines</b> at any point to step through one.</p>
+      <h3>Controls</h3>
+      <ul>
+        <li>Click a piece, then a destination. For a multi-jump, click each landing square.</li>
+        <li><b>Classic clicks</b> mode: moves of certain pieces play instantly, unless the move would collapse something; then you see what changes and confirm. <b>Shift-click</b> the destination to plan instead.</li>
+        <li><b>Quantum planning</b> mode: pick up to two destinations per ghost, then press <kbd>Enter</kbd> or Commit.</li>
+        <li>Click a planned destination again to remove it. <kbd>Esc</kbd> clears the plan. Hold <b>Preview</b> to see the result.</li>
+        <li>Hover (or tap) a ghost to highlight its other ghosts and see what else would be true if it's the real one. A <b>♛?</b> crown means it's a king in only some worlds.</li>
+      </ul>
+    </div>
+  </dialog>
+
+  <dialog id="timelineDlg" class="dlg">
+    <div class="dlg-head"><h2>Timelines</h2><button class="btn subtle" data-close aria-label="Close">✕</button></div>
+    <p class="muted" id="tlIntro"></p>
+    <label class="field inline">Timeline <select id="tlSelect"></select></label>
+    <div id="tlBoard" class="board small"></div>
+    <div class="tl-nav">
+      <button class="btn" id="tlFirst" aria-label="First">⏮</button>
+      <button class="btn" id="tlPrev" aria-label="Previous">◀</button>
+      <span id="tlLabel" class="tl-label"></span>
+      <button class="btn" id="tlNext" aria-label="Next">▶</button>
+      <button class="btn" id="tlLast" aria-label="Last">⏭</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
