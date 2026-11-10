@@ -26,7 +26,6 @@ const ui = {
   history: [], // local undo stack
   flipped: false,
   plan: null, // { piece, paths, active, cur, cache }
-  quantum: loadPref('qc-quantum', false), // planning mode vs. classic clicks
   previewing: false,
   preview: null, // { ok, state?, error?, effects? }
   me: null, // online seat (0/1) or null for spectator
@@ -250,22 +249,25 @@ function computePreview() {
   ui.preview = r;
 }
 
-function afterPlanChange(ev) {
+function afterPlanChange() {
   computePreview();
-  const p = ui.plan;
-  const instantMode = ui.quantum ? ev?.shiftKey : !ev?.shiftKey;
-  const info = p && pieceInfo(p.piece);
-  // Only play instantly when nothing collapses (world count unchanged). Moves that
-  // collapse other pieces always stop at the plan panel so you can see the consequences.
-  if (
-    instantMode && p.paths.length === 1 && ui.preview?.ok &&
-    ui.preview.state.worlds.length === ui.sum.W &&
-    info.locs.size === 1 && info.alive === ui.sum.W && !extSteps().length
-  ) {
-    commit();
-    return;
-  }
   render();
+}
+
+// Backspace: take back the last planned step (or the last planned path).
+function undoPlanStep() {
+  const p = ui.plan;
+  if (!p || !p.paths.length) return;
+  const i = p.cur >= 0 ? p.cur : p.paths.length - 1;
+  const path = p.paths[i];
+  if (path.length > 2) {
+    path.pop();
+    p.cur = i;
+  } else {
+    p.paths.splice(i, 1);
+    p.cur = -1;
+  }
+  afterPlanChange();
 }
 
 function onBoardClick(ev) {
@@ -285,24 +287,18 @@ function onBoardClick(ev) {
   if (p) {
     if (extSteps().includes(sq)) {
       p.paths[p.cur].push(sq);
-      return afterPlanChange(ev);
+      return afterPlanChange();
     }
     if (firstSteps().includes(sq)) {
       p.paths.push([p.active, sq]);
       p.cur = p.paths.length - 1;
-      return afterPlanChange(ev);
+      return afterPlanChange();
     }
-    const idx = p.paths.findIndex((x) => x[x.length - 1] === sq);
-    if (idx >= 0) {
-      const path = p.paths[idx];
-      if (path.length > 2) {
-        path.pop();
-        p.cur = idx;
-      } else {
-        p.paths.splice(idx, 1);
-        p.cur = -1;
-      }
-      return afterPlanChange(ev);
+    // Clicking a planned destination a second time plays the move.
+    if (p.paths.some((x) => x[x.length - 1] === sq)) {
+      if (ui.preview?.ok) return commit();
+      if (ui.preview?.error) toast(esc(ui.preview.error), 3000);
+      return render();
     }
     if (pieceInfo(p.piece).locs.has(sq) && (gid === null || gid === p.piece)) {
       p.active = sq;
@@ -324,12 +320,7 @@ function onBoardClick(ev) {
       p.cur = -1;
     }
     computePreview();
-    if (!planCands(sq).length) {
-      const mustCapture = ui.game.worlds.some((w) => w.b[sq] && w.b[sq] >> 2 === pick &&
-        R.isJumpPath(R.classicalMoves(w.b, ui.game.turn)[0] ?? [0, 0]));
-      toast(`${R.labelOf(pick)} can't move from ${sq + 1} in any world.` +
-        (mustCapture ? ' A capture is mandatory elsewhere.' : ''), 3000);
-    }
+    if (!planCands(sq).length) toast(`${R.labelOf(pick)} can't move from ${sq + 1} in any world.`, 3000);
     render();
     if (gid !== null) showGhostInfo(gid, sq);
     return;
@@ -382,7 +373,7 @@ function setGame(state) {
 function announce(before, after) {
   const move = after.moves[after.moves.length - 1];
   if (!move) return;
-  const effects = R.describeChange(before, after, move.piece);
+  const effects = R.describeChange(before, after, move.piece, move);
   ui.notes[after.ply - 1] = { worlds: [before.worlds.length, after.worlds.length], effects };
   const mover = R.colorName(R.colorOfId(move.piece));
   let html = `<b>${mover}</b> played <b>${esc(R.fmtMove(move))}</b>`;
@@ -423,6 +414,10 @@ function render() {
       for (const sq of extSteps()) dots.push({ sq, color: PATH_COLORS[p.cur % PATH_COLORS.length] });
       for (const sq of firstSteps()) dots.push({ sq, color: nextColor });
       for (const d of dots) boardEl.querySelector(`.cell[data-sq="${d.sq}"]`)?.classList.add('target');
+      // Planned destinations are clickable again to play the move.
+      for (const path of p.paths) {
+        boardEl.querySelector(`.cell[data-sq="${path[path.length - 1]}"]`)?.classList.add('target', 'planned');
+      }
     }
   } else if (ui.preview?.ok) {
     ui.plan.paths.forEach((path, i) => lines.push({ path, color: PATH_COLORS[i % PATH_COLORS.length], opacity: 0.5 }));
@@ -536,18 +531,14 @@ function renderRoom() {
 
 function renderPlan() {
   const el = $('#planPanel');
-  const seg = `<div class="seg" role="group" aria-label="Input mode">
-      <button data-q="0" class="${ui.quantum ? '' : 'on'}">Classic clicks</button>
-      <button data-q="1" class="${ui.quantum ? 'on' : ''}">Quantum planning</button></div>`;
   const p = ui.plan;
   let body;
   if (result()) body = '<p class="hint">The game is over.</p>';
   else if (!canAct()) {
     body = ui.pending ? '<p class="hint">Sending move…</p>' : '<p class="hint">Waiting for the other player.</p>';
   } else if (!p) {
-    body = `<p class="hint">Select one of your pieces. ${ui.quantum
-      ? 'Choose up to two destinations per ghost, then press Commit or Enter.'
-      : 'Moves of certain pieces play instantly. Shift-click a destination to plan a split.'}</p>`;
+    body = `<p class="hint">Click one of your pieces, then where it should go.
+      <b>Click that square again</b> to play the move, or pick a second square first to split the piece.</p>`;
   } else {
     const info = pieceInfo(p.piece);
     const W = ui.sum.W;
@@ -573,9 +564,11 @@ function renderPlan() {
     if (pv?.ok) {
       const W2 = pv.state.worlds.length;
       html += `<p class="summary">Worlds: <b>${W}</b> → <b>${W2}</b>${p.paths.length > 1 && p.paths.some((x, i) => p.paths.findIndex((y) => y[0] === x[0]) !== i) ? ' · split' : ''}</p>`;
-      if (W2 < W) html += '<p class="ruled">This move collapses the board. Check what changes below, then commit.</p>';
+      if (W2 < W) html += '<p class="ruled">This move collapses the board:</p>';
       if (pv.effects.length) html += `<ul class="effects">${pv.effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`;
       if (pv.state.result) html += `<p class="summary"><b>${esc(resultText(pv.state.result))}</b></p>`;
+      const ends = uniq(p.paths.map((x) => x[x.length - 1] + 1));
+      html += `<p class="hint">Click ${ends.join(' or ')} again (or press Enter) to play it.</p>`;
     }
     html += `<div class="actions">
       <button class="btn primary" id="commitBtn" ${pv?.ok ? '' : 'disabled'}>Commit move ⏎</button>
@@ -583,15 +576,8 @@ function renderPlan() {
       <button class="btn subtle" id="clearBtn">Clear</button></div>`;
     body = html;
   }
-  el.innerHTML = seg + body;
+  el.innerHTML = body;
 
-  for (const b of el.querySelectorAll('.seg button')) {
-    b.onclick = () => {
-      ui.quantum = b.dataset.q === '1';
-      savePref('qc-quantum', ui.quantum);
-      render();
-    };
-  }
   for (const b of el.querySelectorAll('[data-rm]')) {
     b.onclick = (e) => {
       e.stopPropagation();
@@ -658,7 +644,7 @@ function replayWithNotes(moves) {
   for (const m of moves) {
     const r = R.applyQuantumMove(st, m);
     if (!r.ok) throw new Error(r.error);
-    notes.push({ worlds: [st.worlds.length, r.state.worlds.length], effects: R.describeChange(st, r.state, m.piece) });
+    notes.push({ worlds: [st.worlds.length, r.state.worlds.length], effects: R.describeChange(st, r.state, m.piece, m) });
     st = r.state;
   }
   ui.notes = notes;
@@ -757,7 +743,7 @@ $('#tlLast').onclick = () => ((tl.step = tl.boards.length - 1), renderTimeline()
 // it directly over WebRTC using PeerJS; PeerJS's free public server is only used
 // to introduce the two browsers. The host validates every guest action, and each
 // guest re-checks the host's move list by replaying it with the rules engine.
-const PEER_PREFIX = 'quantum-checkers-v1-';
+const PEER_PREFIX = 'quantum-checkers-v2-'; // bump when rules change, so old and new clients don't meet
 const HEARTBEAT_MS = 4000;
 const TIMEOUT_MS = 15000;
 
@@ -1051,7 +1037,7 @@ function syncOnline(msg) {
         if (!r.ok) throw new Error(r.error);
         ui.notes[i] = {
           worlds: [st.worlds.length, r.state.worlds.length],
-          effects: R.describeChange(st, r.state, msg.moves[i].piece),
+          effects: R.describeChange(st, r.state, msg.moves[i].piece, msg.moves[i]),
         };
         st = r.state;
       }
@@ -1155,6 +1141,9 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'Escape' && ui.plan) {
     clearPlan();
     render();
+  } else if (e.key === 'Backspace' && ui.plan?.paths.length) {
+    e.preventDefault();
+    undoPlanStep();
   }
 });
 

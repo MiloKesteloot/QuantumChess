@@ -157,6 +157,8 @@ select, input {
 .piece.selected { outline: 3px solid var(--accent-2); outline-offset: 2px; }
 .piece.active { outline: 3px solid #fff; outline-offset: 3px; transform: scale(1.06); }
 .cell.target { cursor: pointer; }
+.cell.planned { box-shadow: inset 0 0 0 3px rgba(255,255,255,.7); }
+.cell.planned:hover { box-shadow: inset 0 0 0 4px #fff; }
 
 .overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
@@ -171,9 +173,6 @@ select, input {
 .room .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 .plan .hint { color: var(--muted); margin: 0 0 10px; font-size: .92rem; }
-.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 12px; }
-.seg button { flex: 1; background: transparent; border: 0; color: var(--muted); padding: 6px 8px; font: inherit; font-size: .85rem; cursor: pointer; }
-.seg button.on { background: var(--panel-2); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
 .loc { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
 .loc.active { border-color: #fff; }
 .loc .head { display: flex; justify-content: space-between; font-size: .9rem; }
@@ -221,6 +220,9 @@ select, input {
 }
 .toast ul { margin: 4px 0 0; padding-left: 18px; }
 
+@media (min-width: 901px) {
+  .toast { left: auto; right: 24px; transform: none; }
+}
 @media (max-width: 900px) {
   .game { grid-template-columns: 1fr; justify-items: center; }
   .side { width: 100%; max-width: 640px; }

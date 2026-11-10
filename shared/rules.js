@@ -55,16 +55,14 @@ export function initialBoard() {
 
 // ---------------------------------------------------------------- classical checkers
 // Returns every legal classical move for `color` as a path of squares
-// [from, ..., to]. Captures are mandatory and jump sequences must be completed.
-// A man that reaches the king row during a jump stops there (American rules).
+// [from, ..., to]. Capturing is optional, and a multi-jump may stop after any
+// hop. A man that reaches the king row during a jump stops there.
 export function classicalMoves(b, color) {
-  const jumps = [];
+  const moves = [];
   for (let sq = 0; sq < 32; sq++) {
     const p = b[sq];
-    if (p && (p & 1) === color) collectJumps(b, sq, sq, p, [sq], new Set(), jumps);
+    if (p && (p & 1) === color) collectJumps(b, sq, sq, p, [sq], new Set(), moves);
   }
-  if (jumps.length) return jumps;
-  const moves = [];
   for (let sq = 0; sq < 32; sq++) {
     const p = b[sq];
     if (!p || (p & 1) !== color) continue;
@@ -79,7 +77,6 @@ export function classicalMoves(b, color) {
 function collectJumps(b, origin, cur, p, path, captured, out) {
   const color = p & 1;
   const king = isKing(p);
-  let extended = false;
   for (const d of king ? ALL_DIRS : FORWARD[color]) {
     const over = STEP[cur][d];
     const land = JUMP[cur][d];
@@ -87,15 +84,13 @@ function collectJumps(b, origin, cur, p, path, captured, out) {
     const q = b[over];
     if (!q || (q & 1) === color || captured.has(over)) continue;
     if (b[land] && land !== origin) continue; // origin is vacated by the mover
-    extended = true;
     path.push(land);
     captured.add(over);
-    if (!king && rowOf(land) === kingRow(color)) out.push(path.slice());
-    else collectJumps(b, origin, land, p, path, captured, out);
+    out.push(path.slice()); // stopping here is legal
+    if (king || rowOf(land) !== kingRow(color)) collectJumps(b, origin, land, p, path, captured, out);
     path.pop();
     captured.delete(over);
   }
-  if (!extended && path.length > 1) out.push(path.slice());
 }
 
 export const isJumpPath = (path) => Math.abs(rowOf(path[1]) - rowOf(path[0])) === 2;
@@ -295,10 +290,18 @@ export function fmtMove(move) {
   return `${labelOf(move.piece)} ${[...groups.values()].map((g) => g.join(' | ')).join(' & ')}`;
 }
 
-// Human-readable list of what a move did to the *other* pieces.
-export function describeChange(before, after, movingPiece) {
+// Human-readable list of what a move did to the *other* pieces. If `move` is
+// given, also says which of the moving piece's own ghosts were ruled out.
+export function describeChange(before, after, movingPiece, move = null) {
   const sb = summarize(before), sa = summarize(after);
   const out = [];
+  if (move) {
+    const origins = new Set(move.paths.map((p) => p[0]));
+    const mp = sb.pieces.get(movingPiece);
+    const ruled = [...mp.locs.keys()].filter((s) => !origins.has(s)).map((s) => s + 1);
+    if (ruled.length) out.push(`${labelOf(movingPiece)} was not on ${ruled.join(' or ')}`);
+    if (mp.alive < sb.W) out.push(`${labelOf(movingPiece)} was not captured`);
+  }
   const states = (sum, id) => {
     const p = sum.pieces.get(id);
     const s = new Set([...p.locs.keys()].map((x) => x + 1));

@@ -62,7 +62,7 @@
   <dialog id="rulesDlg" class="dlg">
     <div class="dlg-head"><h2>How to play</h2><button class="btn subtle" data-close aria-label="Close">✕</button></div>
     <div class="rules">
-      <p>Normal American checkers (8×8, captures are mandatory, multi-jumps must be finished, men become kings on the far row), plus superposition.</p>
+      <p>Checkers on an 8×8 board, plus superposition. Men move diagonally forward and become kings on the far row. Jumping is <b>optional</b>, and you can stop a multi-jump after any hop.</p>
       <h3>Splitting</h3>
       <p>Instead of one move, a piece can make <b>two moves at once</b> and end up in two places. The game now tracks two possible <b>worlds</b>, one for each choice. A piece can be in at most 4 places.</p>
       <h3>Collapse</h3>
@@ -70,7 +70,6 @@
       <ul>
         <li><b>Jumping a ghost</b> proves it was really there. It's captured, and its other ghosts vanish.</li>
         <li><b>Moving onto a ghost's square</b> proves it wasn't there.</li>
-        <li><b>Ignoring a capture</b> that exists in only some worlds proves those worlds weren't real, because captures are mandatory.</li>
         <li><b>Moving a superposed piece</b>: each ghost can move (or split again). Any ghost you don't move is ruled out, since every world needs its piece to move.</li>
       </ul>
       <h3>Winning</h3>
@@ -79,10 +78,11 @@
       <p>Every surviving world is a normal game of checkers where each turn one piece made one legal move. Open <b>Timelines</b> at any point to step through one.</p>
       <h3>Controls</h3>
       <ul>
-        <li>Click a piece, then a destination. For a multi-jump, click each landing square.</li>
-        <li><b>Classic clicks</b> mode: moves of certain pieces play instantly, unless the move would collapse something; then you see what changes and confirm. <b>Shift-click</b> the destination to plan instead.</li>
-        <li><b>Quantum planning</b> mode: pick up to two destinations per ghost, then press <kbd>Enter</kbd> or Commit.</li>
-        <li>Click a planned destination again to remove it. <kbd>Esc</kbd> clears the plan. Hold <b>Preview</b> to see the result.</li>
+        <li>Click a piece, then a destination. <b>Click the destination again</b> to play the move.</li>
+        <li>To <b>split</b>, click a second destination before confirming, then click either destination again.</li>
+        <li>For a multi-jump, click each landing square in turn, then click the last one again.</li>
+        <li>For a piece that's already split, click each ghost and give it a destination. Ghosts you don't move are ruled out.</li>
+        <li>The panel shows what your move will collapse before you confirm. <kbd>Enter</kbd> also plays it, <kbd>Backspace</kbd> takes back a step, <kbd>Esc</kbd> clears. Hold <b>Preview</b> to see the result.</li>
         <li>Hover (or tap) a ghost to highlight its other ghosts and see what else would be true if it's the real one. A <b>♛?</b> crown means it's a king in only some worlds.</li>
       </ul>
     </div>

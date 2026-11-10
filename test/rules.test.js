@@ -92,9 +92,6 @@ test('split, then the opponent jumps one ghost: that ghost was real', () => {
   s = r.state;
   assert.equal(s.worlds.length, 2);
 
-  // Capture is mandatory in both worlds, so a quiet move is impossible.
-  assert.equal(R.applyQuantumMove(s, { piece: 14, paths: [[31, 27]] }).ok, false);
-
   r = R.applyQuantumMove(s, { piece: 13, paths: [[21, 12]] });
   assert.ok(r.ok, r.error);
   assert.equal(r.state.worlds.length, 1);
@@ -102,12 +99,23 @@ test('split, then the opponent jumps one ghost: that ghost was real', () => {
   assertWorldsAreClassicalGames(r.state, start, R.BLACK);
 });
 
-test('declining a capture that exists in only one world proves that world false', () => {
+test('capturing is optional, so declining a jump collapses nothing', () => {
   const start = board([[13, 1], [0, 2], [20, 13], [31, 14]]);
   let s = R.stateFromBoards([start], R.BLACK);
   s = R.applyQuantumMove(s, { piece: 1, paths: [[13, 16], [13, 17]] }).state;
-  // In the world where B1 is on 16, Red must jump it. A quiet move means B1 is on 17.
+  // Red could jump B1 in the world where it's on 16, but doesn't have to.
   const r = R.applyQuantumMove(s, { piece: 14, paths: [[31, 27]] });
+  assert.ok(r.ok, r.error);
+  assert.equal(r.state.worlds.length, 2);
+  assertWorldsAreClassicalGames(r.state, start, R.BLACK);
+});
+
+test('moving onto a ghost square proves the ghost is elsewhere', () => {
+  // B1 splits to 16 | 17; Red's man on 20 steps onto 16, so B1 must be on 17.
+  const start = board([[13, 1], [0, 2], [20, 13], [31, 14]]);
+  let s = R.stateFromBoards([start], R.BLACK);
+  s = R.applyQuantumMove(s, { piece: 1, paths: [[13, 16], [13, 17]] }).state;
+  const r = R.applyQuantumMove(s, { piece: 13, paths: [[20, 16]] });
   assert.ok(r.ok, r.error);
   assert.equal(r.state.worlds.length, 1);
   assert.deepEqual([...R.summarize(r.state).pieces.get(1).locs.keys()], [17]);
@@ -157,11 +165,18 @@ test('a man that is crowned mid-jump stops there', () => {
   assert.equal(R.isKing(b[at(7, 2)]), 1);
 });
 
-test('unfinished multi-jumps are illegal', () => {
-  const start = board([[at(1, 0), 1], [at(2, 1), 13], [at(4, 3), 14], [at(7, 0), 15]]);
+test('a multi-jump may stop after any hop, and jumping is never forced', () => {
+  const start = board([[at(1, 0), 1], [at(2, 1), 13], [at(4, 3), 14], [at(7, 0), 15], [at(0, 7), 2]]);
   const s = R.stateFromBoards([start]);
-  assert.equal(R.applyQuantumMove(s, { piece: 1, paths: [[at(1, 0), at(3, 2)]] }).ok, false);
+  const one = R.applyQuantumMove(s, { piece: 1, paths: [[at(1, 0), at(3, 2)]] });
+  assert.ok(one.ok, one.error);
+  assert.equal(R.summarize(one.state).pieces.get(14).alive, 1, 'second red man survives');
   assert.ok(R.applyQuantumMove(s, { piece: 1, paths: [[at(1, 0), at(3, 2), at(5, 4)]] }).ok);
+  assert.ok(R.applyQuantumMove(s, { piece: 2, paths: [[at(0, 7), at(1, 6)]] }).ok, 'quiet move with a jump available');
+  // A split into "stop" and "continue" is two different worlds.
+  const split = R.applyQuantumMove(s, { piece: 1, paths: [[at(1, 0), at(3, 2)], [at(1, 0), at(3, 2), at(5, 4)]] });
+  assert.ok(split.ok, split.error);
+  assert.equal(split.state.worlds.length, 2);
 });
 
 test('both ghosts moving onto the same square merge the piece back to certain', () => {
@@ -218,8 +233,19 @@ test('describeChange reports collapses and partial captures', () => {
   const start = board([[13, 1], [0, 2], [20, 13], [31, 14]]);
   let s = R.stateFromBoards([start], R.BLACK);
   const split = R.applyQuantumMove(s, { piece: 1, paths: [[13, 16], [13, 17]] }).state;
-  const quiet = R.applyQuantumMove(split, { piece: 14, paths: [[31, 27]] }).state;
-  assert.deepEqual(R.describeChange(split, quiet, 14), ['B1 collapses → 18']);
+  const blocked = R.applyQuantumMove(split, { piece: 13, paths: [[20, 16]] }).state;
+  assert.deepEqual(R.describeChange(split, blocked, 13), ['B1 collapses → 18']);
+  // Red's 20 man splits: jump B1 (if it's on 16) or step to 16 (if it isn't). B1 is then captured in 1 world.
+  const both = R.applyQuantumMove(split, { piece: 13, paths: [[20, 13], [20, 16]] }).state;
+  assert.deepEqual(R.describeChange(split, both, 13), ['B1 captured in 1 of 2 worlds']);
+  // Moving only one ghost of B1 rules out the other.
+  const r = board([[13, 1], [0, 2], [31, 14]]);
+  let t = R.stateFromBoards([r], R.BLACK);
+  t = R.applyQuantumMove(t, { piece: 1, paths: [[13, 16], [13, 17]] }).state;
+  t = R.applyQuantumMove(t, { piece: 14, paths: [[31, 27]] }).state;
+  const mv = { piece: 1, paths: [[16, 20]] };
+  const after = R.applyQuantumMove(t, mv).state;
+  assert.deepEqual(R.describeChange(t, after, 1, mv), ['B1 was not on 18']);
 });
 
 test('malformed and out-of-turn moves are rejected', () => {

@@ -33,7 +33,7 @@ Requires Node 18+. There are no dependencies to install.
 
 ## Rules
 
-Standard American checkers: 8×8 board, Black moves first, captures are mandatory, multi-jumps must be completed, and a man that reaches the far row becomes a king (which ends its move).
+Checkers on an 8×8 board. Black moves first. Men move diagonally forward, and a man that reaches the far row becomes a king (which ends its move). **Jumping is optional**, and a multi-jump can stop after any hop.
 
 **The game state is a set of possible worlds.** Each world is an ordinary checkers position.
 
@@ -41,7 +41,6 @@ Standard American checkers: 8×8 board, Black moves first, captures are mandator
 - **Collapse:** every move must be a legal, ordinary checkers move in each world it applies to. Worlds where it isn't are deleted. So:
   - **Jumping a ghost** proves it was really there. It's captured, and its other ghosts vanish.
   - **Moving onto a ghost's square** proves the piece wasn't there.
-  - **Not taking a capture** that exists in only some worlds proves those worlds were never real, because captures are mandatory.
   - **Moving a superposed piece:** you give each ghost its own move (and can split a ghost again). Any ghost you don't move is ruled out, since in every world the piece you moved has to have actually moved.
 - **Winning:** you lose when you have no legal move in any world. The game is a draw after 40 moves each of non-capturing king moves in every world, or by agreement in online games.
 
@@ -49,10 +48,11 @@ Standard American checkers: 8×8 board, Black moves first, captures are mandator
 
 ## Controls
 
-- Click a piece, then a destination. For multi-jumps, click each landing square.
-- **Classic clicks** mode (default): a move of a piece whose position is certain plays immediately, unless it would collapse something. Then the plan panel shows what changes and you confirm. **Shift-click** the destination to plan a split instead.
-- **Quantum planning** mode: choose up to two destinations for each ghost, then press **Enter** or **Commit**. Shift-click plays immediately.
-- Click a planned destination again to remove it. **Esc** clears the plan. Hold **Preview** to see the resulting board. The plan panel lists which pieces the move will collapse before you commit.
+- Click a piece, then a destination. **Click the destination again** (or press **Enter**) to play the move.
+- **Split:** click a second destination before confirming, then click either destination again.
+- **Multi-jump:** click each landing square in turn, then click the last one again.
+- **Moving a split piece:** click each ghost and give it a destination (up to two each). Ghosts you don't move are ruled out.
+- Before you confirm, the panel shows what the move will collapse. **Backspace** takes back a step, **Esc** clears, and holding **Preview** shows the resulting board.
 - Hover (or tap) a ghost to highlight its other ghosts and see what else would be true if it's the real one. Translucent pieces with a dashed outline are in superposition, and the tag shows the share of worlds they're in. A **♛?** crown means the piece is a king in only some worlds. The move log notes what each move collapsed.
 
 Notation uses the standard 1–32 square numbers. `B10 10-14 | 10-15` means piece B10 split to squares 14 and 15. `&` separates moves of different ghosts, and `x` marks a jump.
