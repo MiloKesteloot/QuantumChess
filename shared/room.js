@@ -4,7 +4,7 @@
 //
 // A client is any object with: send(msg), isOpen(), and a `token` property
 // that the room sets when the client joins.
-import { initialState, applyQuantumMove, replay, BLACK, RED } from './rules.js';
+import { initialState, applyQuantumMove, replay } from './quantum.js';
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -25,18 +25,19 @@ export function normalizeCode(code) {
 }
 
 export class Room {
-  constructor(code, { saved = null, onChange = () => {} } = {}) {
+  constructor(code, { game = 'checkers', saved = null, onChange = () => {} } = {}) {
     this.code = code;
     this.clients = new Set();
     this.onChange = onChange;
     this.tokens = [null, null]; // tokens[color] identifies the player in that seat
-    this.state = initialState();
+    this.game = saved ? saved.game : game;
+    this.state = initialState(this.game);
     this.result = null; // resign / agreed draw; engine results live in state.result
     this.drawOffer = null;
     this.rematch = [false, false];
     if (saved) {
       this.tokens = saved.tokens;
-      this.state = replay(saved.moves);
+      this.state = replay(this.game, saved.moves);
       this.result = saved.result;
       this.drawOffer = saved.drawOffer;
       this.rematch = saved.rematch;
@@ -46,6 +47,7 @@ export class Room {
   serialize() {
     return {
       code: this.code,
+      game: this.game,
       tokens: this.tokens,
       moves: this.state.moves,
       result: this.result,
@@ -54,9 +56,9 @@ export class Room {
     };
   }
 
-  // The creator takes a seat before anyone connects. color: 'black' | 'red' | 'random'.
+  // The creator takes a seat before anyone connects. color: 0 | 1 | 'random'.
   claimSeat(color) {
-    const seat = color === 'black' ? BLACK : color === 'red' ? RED : randomToken().charCodeAt(0) % 2;
+    const seat = color === 0 || color === 1 ? color : randomToken().charCodeAt(0) % 2;
     const token = randomToken();
     this.tokens[seat] = token;
     return token;
@@ -127,7 +129,7 @@ export class Room {
         this.rematch[seat] = true;
         if (this.rematch[0] && this.rematch[1]) {
           this.tokens.reverse(); // swap colors
-          this.state = initialState();
+          this.state = initialState(this.game);
           this.result = null;
           this.drawOffer = null;
           this.rematch = [false, false];
@@ -145,14 +147,14 @@ export class Room {
   }
 
   broadcast() {
-    const online = [BLACK, RED].map((c) =>
-      [...this.clients].some((cl) => cl.isOpen() && this.seatOf(cl.token) === c));
+    const online = [0, 1].map((c) => [...this.clients].some((cl) => cl.isOpen() && this.seatOf(cl.token) === c));
     for (const cl of this.clients) {
       if (!cl.isOpen()) continue;
       const seat = this.seatOf(cl.token);
       cl.send({
         t: 'state',
         room: this.code,
+        game: this.game,
         you: seat >= 0 ? seat : null,
         moves: this.state.moves,
         result: this.result || this.state.result,

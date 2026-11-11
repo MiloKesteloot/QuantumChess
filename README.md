@@ -1,6 +1,6 @@
-# Quantum Checkers
+# Quantum Games: Checkers, Chess and Reversi
 
-Checkers where a piece can make two moves at once and exist in superposition until the game forces it to collapse. You can play against the computer, two players on one device, or online with a friend through a link. It works on phones, tablets and desktops.
+Three classic board games with one twist: a piece can make two moves at once and exist in superposition until the game forces it to collapse. Pick a game on the start page, then play against the computer, two players on one device, or online with a friend through a link. It works on phones, tablets and desktops.
 
 It's a static site, so there's no server to run or pay for.
 
@@ -8,17 +8,18 @@ It's a static site, so there's no server to run or pay for.
 
 1. Push this repo to GitHub.
 2. In the repo, go to **Settings → Pages**. Under **Build and deployment**, choose **Deploy from a branch**, select **main** and **/ (root)**, then click **Save**.
-3. After a minute the game is live at `https://<your-username>.github.io/<repo-name>/`.
+3. After a minute the site is live at `https://<your-username>.github.io/<repo-name>/`. Add `?game=chess` (or `checkers`, `reversi`) to link straight to one game.
 
 ## Playing
 
-- **Vs computer:** pick a difficulty and your color, then click **Play the computer**. Easy makes mistakes, Medium looks a few moves ahead, and Hard thinks for up to about two seconds per move. The computer splits and collapses pieces too. Undo takes you back to your previous turn.
-- **Same device:** click **Start local game**.
-- **Online:** click **Create online game**, then **Copy invite link** and send it to a friend. Opening the link joins the game. Anyone who opens it after both seats are taken can watch.
+- **Pick a game** with the three tiles at the top of the start page. Everything below (and the How to play guide) follows your choice.
+- **Vs computer:** pick a difficulty and your color, then click **Play … vs computer**. Easy makes mistakes, Medium looks a few moves ahead, and Hard thinks for up to about two seconds per move. The computer splits and collapses pieces too. Undo takes you back to your previous turn.
+- **Same device:** click **Start local …**.
+- **Online:** click **Create online … game**, then **Copy invite link** and send it to a friend. Opening the link joins the game (the creator chooses the game). Anyone who opens it after both seats are taken can watch.
 
 How online play works: the creator's browser hosts the game, and the two browsers talk to each other directly (WebRTC, via [PeerJS](https://peerjs.com/)). PeerJS's free public service only introduces the browsers to each other. What this means in practice:
 
-- **The host needs to keep their tab open.** If they close or refresh it, the game pauses. Reopening the invite link in the same browser restores the game, and the other player reconnects automatically.
+- **Refreshing is fine.** Each player's seat is remembered by their browser, so after a refresh they are back in the same game within a second or two. If the host closes their tab for good, the game pauses; reopening the invite link in the same browser restores it, and the other player reconnects automatically.
 - **Both players check every move.** The host rejects illegal moves from the guest, and the guest replays the host's move list with the same rules engine.
 - **Some networks may not connect.** A few very strict networks (some workplace or school Wi-Fi) can block browser-to-browser connections. PeerJS falls back to a relay server, which fixes most cases.
 - **Test it yourself** by opening the invite link in a second tab. Each tab gets its own seat.
@@ -27,46 +28,72 @@ How online play works: the creator's browser hosts the game, and the two browser
 
 ```sh
 npm start   # http://localhost:3000  (any static file server works too)
-npm test    # rules engine, room and AI tests
+npm test    # engine, rules, room and AI tests
 ```
 
 Requires Node 18+. There are no dependencies to install.
 
-## Rules
+## The quantum rules (all three games)
 
-Checkers on an 8×8 board. Black moves first. Men move diagonally forward, and a man that reaches the far row becomes a king (which ends its move). **Jumping is optional**, and a multi-jump can stop after any hop.
+**The game state is a set of possible worlds.** Each world is an ordinary position of the game you're playing, together with the ordinary move history that produced it.
 
-**The game state is a set of possible worlds.** Each world is an ordinary checkers position.
+- **Split:** instead of one move, make two different moves at once. Every world is copied: in one copy the piece went one way, in the other it went the other way. A piece can be in at most 4 places, and the game holds at most 512 worlds.
+- **Collapse:** every move must be a legal, ordinary move in each world it applies to. Worlds where it isn't are deleted. Which moves are legal depends on where the ghosts really are, so moves act as measurements.
+- **Moving a superposed piece:** give each ghost its own move (and you can split a ghost again). Any ghost you don't move is ruled out, since in every world the piece you moved has to have actually moved.
+- **Winning:** you lose when you have no legal move in any world. If every surviving world is a draw, it's a draw. Online games can also end by resignation or agreement.
 
-- **Split:** a piece makes two different moves at once. Every world is copied: in one copy it went one way, in the other copy it went the other way. A piece can be in at most 4 places, and the game holds at most 512 worlds.
-- **Collapse:** every move must be a legal, ordinary checkers move in each world it applies to. Worlds where it isn't are deleted. So:
-  - **Jumping a ghost** proves it was really there. It's captured, and its other ghosts vanish.
-  - **Moving onto a ghost's square** proves the piece wasn't there.
-  - **Moving a superposed piece:** you give each ghost its own move (and can split a ghost again). Any ghost you don't move is ruled out, since in every world the piece you moved has to have actually moved.
-- **Winning:** you lose when you have no legal move in any world. The game is a draw after 40 moves each of non-capturing king moves in every world, or by agreement in online games.
+**The guarantee:** every surviving world is a normal game in which each turn the side to move made exactly one legal move. The **Timelines** button lets you step through any of them. When the game ends, it shows the game that really happened.
 
-**The guarantee:** every surviving world is a normal game of checkers where each turn one piece made one legal move. The **Timelines** button lets you step through any of them. When the game ends, it shows the game that really happened.
+### Checkers
+
+Black moves first. Men move diagonally forward and become kings on the far row (which ends the move). **Jumping is optional**, and a multi-jump can stop after any hop.
+
+- **Jumping a ghost** proves it was really there: it's captured, and its other ghosts vanish.
+- **Moving onto a ghost's square** proves the piece wasn't there.
+- Draw after 40 moves each of non-capturing king moves in every world.
+
+### Chess
+
+Full rules: castling, en passant, promotion, check. White moves first.
+
+- A move may **never leave your own king in check** in a world, so if your king is in check in some worlds (it glows red), any move that ignores the check there rules those worlds out.
+- **Sliding through a ghost** (rook, bishop, queen) or pushing a pawn onto one proves it wasn't there.
+- **Moving onto a ghost's square** is legal either way: a capture where the piece is, a quiet move where it isn't, so by itself it collapses nothing. Tick **Declare the capture** to assert the piece is really there; only those worlds survive.
+- **Checkmate:** no legal move in any world, and in check in at least one. No legal move anywhere without check is stalemate. Draw also after 50 moves each without a capture or pawn move in every world, or when neither side has mating material anywhere.
+
+### Reversi
+
+Black moves first. A placement must outflank and flip at least one enemy disc. If you have no legal placement you must pass; when nobody can move, the game is over.
+
+- Flips happen separately in each world, so a disc can be **black in some worlds and white in others**: it's drawn half-and-half with the share shown on its tag.
+- Placing where you would **flip nothing** in some worlds rules those worlds out; placing on a ghost disc proves it wasn't there. Almost every move is a measurement.
+- **Passing:** if you have no legal placement in some worlds, tick **Pass** for those while placing a disc in the others. If you have none anywhere, you pass automatically.
+- **Scoring:** when nobody can move in any world, your score is your average disc count over the surviving timelines.
 
 ## Controls
 
-- Click a piece, then a destination. **Click the destination again** (or press **Enter**) to play the move.
+- Click a piece (or, in Reversi, a square), then a destination. **Click the destination again** (or press **Enter**) to play the move.
 - **Split:** click a second destination before confirming, then click either destination again.
-- **Multi-jump:** click each landing square in turn, then click the last one again.
+- **Checkers multi-jump:** click each landing square in turn, then click the last one again.
+- **Chess promotion** and **declared captures** get buttons in the move panel (and the bottom bar on phones).
 - **Moving a split piece:** click each ghost and give it a destination (up to two each). Ghosts you don't move are ruled out.
 - Before you confirm, the panel shows what the move will collapse. **Backspace** takes back a step, **Esc** clears, and holding **Preview** shows the resulting board.
-- Hover (or tap) a ghost to highlight its other ghosts and see what else would be true if it's the real one. Translucent pieces with a dashed outline are in superposition, and the tag shows the share of worlds they're in. A **♛?** crown means the piece is a king in only some worlds. The move log notes what each move collapsed.
+- Hover (or tap) a ghost to highlight its other ghosts and see what else would be true if it's the real one. Translucent pieces with a dashed outline are in superposition, and the tag shows the share of worlds they're in. A glyph followed by **?** (for example ♛?) means the piece is that kind in only some worlds. The move log notes what each move collapsed.
 
-Notation uses the standard 1–32 square numbers. `B10 10-14 | 10-15` means piece B10 split to squares 14 and 15. `&` separates moves of different ghosts, and `x` marks a jump.
+Notation: checkers uses the standard 1–32 square numbers (`B10 10-14 | 10-15` means piece B10 split to squares 14 and 15; `x` marks a jump). Chess names pieces by their starting square (`♘g1 g1-f3 | g1-h3`; `h5xh6` is a declared capture; `e7-e8=Q` a promotion). Reversi lists squares (`d3 | f5`). `&` separates the moves of different ghosts.
 
 ## Code layout
 
 | Path | What it is |
 | --- | --- |
-| `index.html`, `style.css`, `app.js` | The game page and UI. No build step. |
-| `help.js` | The illustrated How to play guide (board diagrams are defined as small specs at the top). |
+| `index.html`, `style.css`, `app.js` | The page and UI: game picker, board, move planning, timelines, networking glue. No build step. |
+| `help.js` | The illustrated How to play guide, one deck per game (diagrams are small specs at the top). |
 | `ai-worker.js` | Runs the computer opponent in the background so the page stays responsive. |
-| `shared/rules.js` | Rules engine: worlds, classical move generation, quantum moves, collapse. |
-| `shared/ai.js` | Computer opponent: alpha-beta search over quantum moves, scoring expected material across worlds. |
+| `shared/quantum.js` | The quantum engine: worlds, quantum moves, collapse, timelines. Game-agnostic. |
+| `shared/games/checkers.js`, `chess.js`, `reversi.js` | Classical rules for each game, behind one small interface (documented at the top of `quantum.js`). |
+| `shared/ai.js` | Computer opponent: alpha-beta search over quantum moves, scoring each game's expected evaluation across worlds. |
 | `shared/room.js` | Online room logic (seats, turns, resign, draws, rematch). Runs in the host's browser. |
 | `server.js` | Tiny local dev server. Not used on GitHub Pages. |
-| `test/` | Engine, room and AI tests, including a fuzz test that checks every surviving world is a legal classical game. |
+| `test/` | Engine, per-game rules (including chess perft), room and AI tests, plus a fuzz test per game that checks every surviving world is a legal classical game. |
+
+Adding a game means writing one module in `shared/games/` (classical move generation, apply, terminal status, formatting) and a slide deck in `help.js`; the engine, UI, AI and networking are shared.

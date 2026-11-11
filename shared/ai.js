@@ -1,11 +1,12 @@
-// Computer opponent for Quantum Checkers.
+// Computer opponent, for any game the quantum engine supports.
 //
 // Search: negamax with alpha-beta over quantum moves, iterative deepening under a
-// time budget. A position is scored by its *expected* material over all worlds
-// (each world equally likely). Because the side to move can collapse worlds in its
-// own favour, the search naturally learns when splitting is safe and when the
-// opponent would get to "choose" which ghost is real.
-import { applyQuantumMove, candidatePaths, summarize, rowOf, colOf, isKing, colorOfId, samePath, BLACK } from './rules.js';
+// time budget. A position is scored by the game's *expected* evaluation over all
+// worlds (each world equally likely). Because the side to move can collapse worlds
+// in its own favour, the search naturally learns when splitting is safe and when
+// the opponent would get to "choose" which ghost is real.
+import { applyQuantumMove, allCandidates, summarize } from './quantum.js';
+import { gameOf } from './games/index.js';
 
 export const LEVELS = {
   easy: { maxDepth: 1, timeMs: 150, noise: 70, blunder: 0.2 },
@@ -14,88 +15,76 @@ export const LEVELS = {
 };
 
 const WIN = 100000;
-const MAX_AI_WORLDS = 64; // keep the search tractable: don't create more superposition than this
+const MAX_AI_WORLDS = 48; // keep the search tractable: don't create more superposition than this
 const MAX_COMBOS = 12;    // cap on "move every ghost" combinations per piece
-
-// ---------------------------------------------------------------- evaluation
-// Material plus a little positional sense, averaged over worlds, from `color`'s view.
-function evalBoard(b, color) {
-  let score = 0;
-  for (let sq = 0; sq < 32; sq++) {
-    const p = b[sq];
-    if (!p) continue;
-    const mine = (p & 1) === color;
-    const r = rowOf(sq), c = colOf(sq);
-    let v;
-    if (isKing(p)) v = 165;
-    else {
-      const advance = (p & 1) === BLACK ? r : 7 - r; // 0..7 toward promotion
-      v = 100 + advance * 3;
-      if (advance === 0) v += 4; // back-row guard
-    }
-    if (c >= 2 && c <= 5 && r >= 2 && r <= 5) v += 4; // centre
-    if (c === 0 || c === 7) v -= 2; // edges are a bit passive
-    score += mine ? v : -v;
-  }
-  return score;
-}
+const SPLIT_POOL = 8;     // splits are built from the best few single moves
 
 export function evaluate(state, color) {
   if (state.result) {
     if (state.result.winner === null) return 0;
     return state.result.winner === color ? WIN : -WIN;
   }
+  const g = gameOf(state.game);
   let total = 0;
-  for (const w of state.worlds) total += evalBoard(w.b, color);
+  for (const w of state.worlds) total += g.evaluate(w.b, color);
   return total / state.worlds.length;
 }
 
-// ---------------------------------------------------------------- move generation
-// Every quantum move worth considering for the side to move.
-export function generateMoves(state, { allowSplits = true } = {}) {
-  const color = state.turn;
-  const sum = summarize(state);
+// Single-alternative moves and "move every ghost" combinations for the side to move.
+export function generateMoves(state) {
+  const g = gameOf(state.game);
+  const skip = g.ai?.skip || (() => false);
   const moves = [];
-  for (const [id, info] of sum.pieces) {
-    if (colorOfId(id) !== color || info.alive === 0) continue;
-    const locs = [...info.locs.keys()];
-    const cands = locs.map((l) => candidatePaths(state, id, l).map((c) => c.path));
-
-    // Move one ghost (if the piece is split, this collapses it onto that ghost).
-    locs.forEach((_, i) => {
-      for (const p of cands[i]) moves.push({ piece: id, paths: [p] });
+  for (const [piece, byOrigin] of allCandidates(state)) {
+    const origins = [...byOrigin.keys()];
+    const cands = origins.map((o) => byOrigin.get(o).filter((c) => !skip(c.m)));
+    origins.forEach((_, i) => {
+      for (const c of cands[i]) moves.push({ piece, alts: [c.key], from: c.m.from, single: true });
     });
-
-    // Move every ghost, one path each, keeping the superposition.
-    if (locs.length > 1 && cands.every((c) => c.length)) {
+    // A split piece: move every ghost, one move each, keeping the superposition.
+    if (origins.length > 1 && cands.every((c) => c.length)) {
       let combos = [[]];
       for (const c of cands) {
         const next = [];
-        for (const prefix of combos) for (const p of c) next.push([...prefix, p]);
+        for (const prefix of combos) for (const x of c) next.push([...prefix, x.key]);
         combos = next.slice(0, MAX_COMBOS);
       }
-      for (const paths of combos) moves.push({ piece: id, paths });
-    }
-
-    // Split a piece that is in one place into two.
-    if (allowSplits && locs.length === 1 && info.alive === sum.W && cands[0].length >= 2) {
-      const c = cands[0];
-      for (let i = 0; i < c.length; i++) {
-        for (let j = i + 1; j < c.length; j++) moves.push({ piece: id, paths: [c[i], c[j]] });
-      }
+      for (const alts of combos) moves.push({ piece, alts });
     }
   }
   return moves;
 }
 
-// Applies each candidate and drops the illegal / too-expensive ones.
-function expand(state, allowSplits) {
+// Applies each candidate, drops the illegal / too-expensive ones, and adds up to
+// `splits` split moves built from pairs of the best-looking single moves.
+function expand(state, splits) {
+  const g = gameOf(state.game);
+  const color = state.turn;
+  const limit = Math.max(MAX_AI_WORLDS, state.worlds.length);
   const out = [];
-  for (const m of generateMoves(state, { allowSplits })) {
-    const r = applyQuantumMove(state, m);
-    if (!r.ok) continue;
-    if (r.state.worlds.length > MAX_AI_WORLDS && r.state.worlds.length > state.worlds.length) continue;
-    out.push({ move: m, state: r.state });
+  const tryMove = (move) => {
+    const r = applyQuantumMove(state, move);
+    if (!r.ok || r.state.worlds.length > limit) return null;
+    const ch = { move, state: r.state, order: evaluate(r.state, color) };
+    out.push(ch);
+    return ch;
+  };
+  const singles = [];
+  for (const m of generateMoves(state)) {
+    const ch = tryMove(m);
+    if (ch && m.single) singles.push(ch);
+  }
+  if (splits > 0 && singles.length > 1) {
+    singles.sort((a, b) => b.order - a.order);
+    const pool = singles.slice(0, SPLIT_POOL);
+    let made = 0;
+    for (let i = 0; i < pool.length && made < splits; i++) {
+      for (let j = i + 1; j < pool.length && made < splits; j++) {
+        const a = pool[i].move, b = pool[j].move;
+        if (a.piece !== b.piece || a.from !== b.from) continue;
+        if (tryMove({ piece: a.piece, alts: [a.alts[0], b.alts[0]] })) made++;
+      }
+    }
   }
   return out;
 }
@@ -104,18 +93,15 @@ function expand(state, allowSplits) {
 class Timeout extends Error {}
 
 function negamax(state, depth, alpha, beta, ctx, ply) {
-  if ((++ctx.nodes & 63) === 0 && Date.now() > ctx.deadline) throw new Timeout();
+  if ((++ctx.nodes & 31) === 0 && Date.now() > ctx.deadline) throw new Timeout();
   const color = state.turn;
   if (state.result || depth === 0) {
     const v = evaluate(state, color);
-    // Prefer quicker wins and slower losses.
-    return v === WIN ? v - ply : v === -WIN ? v + ply : v;
+    return v === WIN ? v - ply : v === -WIN ? v + ply : v; // prefer quicker wins, slower losses
   }
-  const children = expand(state, state.worlds.length <= 16);
+  const children = expand(state, state.worlds.length <= 16 ? ctx.splitsInner : 0);
   if (!children.length) return -WIN + ply;
-  // Order: best-looking first, so alpha-beta prunes more.
-  for (const ch of children) ch.order = -evaluate(ch.state, ch.state.turn);
-  children.sort((a, b) => b.order - a.order);
+  children.sort((a, b) => b.order - a.order); // best-looking first, so alpha-beta prunes more
   let best = -Infinity;
   for (const ch of children) {
     const v = -negamax(ch.state, depth - 1, -beta, -alpha, ctx, ply + 1);
@@ -129,14 +115,14 @@ function negamax(state, depth, alpha, beta, ctx, ply) {
 // Picks a move for the side to move. `random` is injectable for tests.
 export function chooseMove(state, level = 'medium', random = Math.random) {
   const cfg = LEVELS[level] || LEVELS.medium;
-  const color = state.turn;
-  const root = expand(state, true);
+  const g = gameOf(state.game);
+  const ctx = { nodes: 0, deadline: Date.now() + cfg.timeMs, splitsInner: g.ai?.splitsInner ?? 6 };
+  const root = expand(state, g.ai?.splitsRoot ?? 20);
   if (!root.length) return null;
-  if (root.length === 1) return root[0].move;
-  if (cfg.blunder && random() < cfg.blunder) return root[Math.floor(random() * root.length)].move;
+  if (root.length === 1) return strip(root[0].move);
+  if (cfg.blunder && random() < cfg.blunder) return strip(root[Math.floor(random() * root.length)].move);
 
-  const ctx = { nodes: 0, deadline: Date.now() + cfg.timeMs };
-  for (const ch of root) ch.score = evaluate(ch.state, color); // depth-1 scores as a fallback
+  for (const ch of root) ch.score = ch.order; // depth-1 scores as a fallback
   for (let depth = 2; depth <= cfg.maxDepth; depth++) {
     try {
       root.sort((a, b) => b.score - a.score);
@@ -160,9 +146,7 @@ export function chooseMove(state, level = 'medium', random = Math.random) {
   // Choose among the near-best moves (noise makes easier levels less predictable).
   const best = Math.max(...root.map((c) => c.score));
   const pool = root.filter((c) => c.score >= best - cfg.noise - 1e-9);
-  return pool[Math.floor(random() * pool.length)].move;
+  return strip(pool[Math.floor(random() * pool.length)].move);
 }
 
-export function sameQuantumMove(a, b) {
-  return a.piece === b.piece && a.paths.length === b.paths.length && a.paths.every((p, i) => samePath(p, b.paths[i]));
-}
+const strip = (m) => ({ piece: m.piece, alts: m.alts });

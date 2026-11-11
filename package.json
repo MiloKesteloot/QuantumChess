@@ -1,7 +1,7 @@
 {
-  "name": "quantum-checkers",
+  "name": "quantum-games",
   "version": "0.1.0",
-  "description": "Checkers where pieces can split into superposition, with local and online multiplayer.",
+  "description": "Checkers, chess and reversi where pieces can split into superposition, with AI, local and online play.",
   "type": "module",
   "private": true,
   "scripts": {

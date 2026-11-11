@@ -12,7 +12,7 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
 };
-const ALLOWED = /^\/(index\.html|style\.css|(?!server\.js)[a-z-]+\.js|shared\/[a-z-]+\.js)$/;
+const ALLOWED = /^\/(index\.html|style\.css|(?!server\.js)[a-z-]+\.js|shared\/[a-z-]+\.js|shared\/games\/[a-z-]+\.js)$/;
 
 http.createServer((req, res) => {
   const url = req.url.split('?')[0];
@@ -29,4 +29,4 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(rel)], 'Cache-Control': 'no-cache' });
     res.end(data);
   });
-}).listen(PORT, () => console.log(`Quantum Checkers dev server: http://localhost:${PORT}`));
+}).listen(PORT, () => console.log(`Quantum Games dev server: http://localhost:${PORT}`));
