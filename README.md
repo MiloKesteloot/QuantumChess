@@ -12,10 +12,11 @@ It's a static site, so there's no server to run or pay for.
 
 ## Playing
 
-- **Pick a game** with the three tiles at the top of the start page. Everything below (and the How to play guide) follows your choice.
-- **Vs computer:** pick a difficulty and your color, then click **Play … vs computer**. Easy makes mistakes, Medium looks a few moves ahead, and Hard thinks for up to about two seconds per move. The computer splits and collapses pieces too. Undo takes you back to your previous turn.
-- **Same device:** click **Start local …**.
-- **Online:** click **Create online … game**, then **Copy invite link** and send it to a friend. Opening the link joins the game (the creator chooses the game). Anyone who opens it after both seats are taken can watch.
+- **Choose a game** on the opening page. That takes you to the game's own page, where you choose how to play it.
+- **Play the computer:** pick a difficulty and your color, then click **Play**. Easy makes mistakes, Medium looks a few moves ahead, and Hard thinks for up to about two seconds per move. The computer splits and collapses pieces too. Undo takes you back to your previous turn.
+- **Pass and play:** two players share one screen.
+- **Play a friend online:** click **Create game**. The invite link appears over the board with a big **Copy invite link** button; send it to a friend, and the game starts when they open it. Opening the link joins the game (the creator chooses the game). Anyone who opens it after both seats are taken can watch. You can also type a game code into the yellow **Got a code?** box on the opening page.
+- **Which way up:** you are always at the bottom of the board. In pass-and-play the side that moves first is at the bottom.
 
 How online play works: the creator's browser hosts the game, and the two browsers talk to each other directly (WebRTC, via [PeerJS](https://peerjs.com/)). PeerJS's free public service only introduces the browsers to each other. What this means in practice:
 
@@ -42,7 +43,7 @@ Requires Node 18+. There are no dependencies to install.
 - **Moving a superposed piece:** give each ghost its own move (and you can split a ghost again). Any ghost you don't move is ruled out, since in every world the piece you moved has to have actually moved.
 - **Winning:** you lose when you have no legal move in any world. If every surviving world is a draw, it's a draw. Online games can also end by resignation or agreement.
 
-**The guarantee:** every surviving world is a normal game in which each turn the side to move made exactly one legal move. The **Timelines** button lets you step through any of them. When the game ends, it shows the game that really happened.
+**The guarantee:** every surviving world is a normal game in which each turn the side to move made exactly one legal move. The **See the worlds** button lets you step through any of them. When the game ends, it shows the game that really happened.
 
 ### Checkers
 
@@ -65,7 +66,7 @@ Full rules: castling, en passant, promotion, check. White moves first.
 
 Black moves first. A placement must outflank and flip at least one enemy disc. If you have no legal placement you must pass; when nobody can move, the game is over.
 
-- Flips happen separately in each world, so a disc can be **black in some worlds and white in others**: it's drawn half-and-half with the share shown on its tag.
+- Flips happen separately in each world, so a disc can be **black in some worlds and white in others**: it's drawn half-and-half.
 - Placing where you would **flip nothing** in some worlds rules those worlds out; placing on a ghost disc proves it wasn't there. Almost every move is a measurement.
 - **Passing:** if you have no legal placement in some worlds, tick **Pass** for those while placing a disc in the others. If you have none anywhere, you pass automatically.
 - **Scoring:** when nobody can move in any world, your score is your average disc count over the surviving timelines.
@@ -78,7 +79,7 @@ Black moves first. A placement must outflank and flip at least one enemy disc. I
 - **Chess promotion** and **declared captures** get buttons in the move panel (and the bottom bar on phones).
 - **Moving a split piece:** click each ghost and give it a destination (up to two each). Ghosts you don't move are ruled out.
 - Before you confirm, the panel shows what the move will collapse. **Backspace** takes back a step, **Esc** clears, and holding **Preview** shows the resulting board.
-- Hover (or tap) a ghost to highlight its other ghosts and see what else would be true if it's the real one. Translucent pieces with a dashed outline are in superposition, and the tag shows the share of worlds they're in. A glyph followed by **?** (for example ♛?) means the piece is that kind in only some worlds. The move log notes what each move collapsed.
+- A see-through piece is a ghost: it might not really be there. A dashed line joins the ghosts of one piece. Nothing is random, so there are no odds to show; a ghost stays until a move proves where the piece is. Hover (or tap) a ghost to see what else would be true if it's the real one. A small **?** badge means the piece is that kind (say, a promoted queen) in only some worlds. The move log notes what each move collapsed.
 
 Notation: checkers uses the standard 1–32 square numbers (`B10 10-14 | 10-15` means piece B10 split to squares 14 and 15; `x` marks a jump). Chess names pieces by their starting square (`♘g1 g1-f3 | g1-h3`; `h5xh6` is a declared capture; `e7-e8=Q` a promotion). Reversi lists squares (`d3 | f5`). `&` separates the moves of different ghosts.
 
@@ -87,6 +88,7 @@ Notation: checkers uses the standard 1–32 square numbers (`B10 10-14 | 10-15` 
 | Path | What it is |
 | --- | --- |
 | `index.html`, `style.css`, `app.js` | The page and UI: game picker, board, move planning, timelines, networking glue. No build step. |
+| `pieces/` | Chess piece images (see Credits). |
 | `help.js` | The illustrated How to play guide, one deck per game (diagrams are small specs at the top). |
 | `ai-worker.js` | Runs the computer opponent in the background so the page stays responsive. |
 | `shared/quantum.js` | The quantum engine: worlds, quantum moves, collapse, timelines. Game-agnostic. |
@@ -95,5 +97,9 @@ Notation: checkers uses the standard 1–32 square numbers (`B10 10-14 | 10-15` 
 | `shared/room.js` | Online room logic (seats, turns, resign, draws, rematch). Runs in the host's browser. |
 | `server.js` | Tiny local dev server. Not used on GitHub Pages. |
 | `test/` | Engine, per-game rules (including chess perft), room and AI tests, plus a fuzz test per game that checks every surviving world is a legal classical game. |
+
+## Credits
+
+The chess pieces in `pieces/` are the standard set drawn by Colin M.L. Burnett ("cburnett"), as used by Wikipedia and Lichess, available under the GPLv2+, BSD and GFDL licenses. The fonts (Bagel Fat One and DM Sans, both under the SIL Open Font License) load from Google Fonts; without a connection the page falls back to system fonts.
 
 Adding a game means writing one module in `shared/games/` (classical move generation, apply, terminal status, formatting) and a slide deck in `help.js`; the engine, UI, AI and networking are shared.

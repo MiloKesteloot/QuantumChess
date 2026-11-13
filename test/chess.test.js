@@ -109,7 +109,7 @@ test('a plain move onto a ghost works either way; a declared capture proves the 
   const plain = apply(s, mv(q, 'h4h3'));
   assert.equal(plain.worlds.length, 2, 'legal in both worlds: a capture in one, a quiet move in the other');
   assert.equal(Q.summarize(plain).pieces.get(n).alive, 1, 'the knight survives in the f3 world');
-  assert.deepEqual(Q.describeChange(s, plain, q), [`${CH.labelOf(n)} captured in 1 of 2 worlds`]);
+  assert.deepEqual(Q.describeChange(s, plain, q), [`${CH.labelOf(n)} might be captured`]);
 
   const declared = apply(s, mv(q, 'h4xh3'));
   assert.equal(declared.worlds.length, 1, 'only the world where the knight was on h3');

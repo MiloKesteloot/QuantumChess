@@ -140,7 +140,7 @@ test('describeChange reports collapses and partial captures', () => {
   const blocked = apply(split, mv(13, '21-17'));
   assert.deepEqual(Q.describeChange(split, blocked, 13), ['B1 collapses → 18']);
   const both = apply(split, mv(13, '21x14', '21-17'));
-  assert.deepEqual(Q.describeChange(split, both, 13), ['B1 captured in 1 of 2 worlds']);
+  assert.deepEqual(Q.describeChange(split, both, 13), ['B1 might be captured']);
   const r = board([[13, 1], [0, 2], [31, 14]]);
   let t = apply(S(r), mv(1, '14-17', '14-18'));
   t = apply(t, mv(14, '32-28'));

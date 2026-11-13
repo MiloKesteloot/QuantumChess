@@ -5,7 +5,7 @@ import { setupHelp, miniBoard } from './help.js';
 
 const $ = (s) => document.querySelector(s);
 const boardEl = $('#board');
-const PATH_COLORS = ['#5ee6ff', '#ff6bd6', '#ffd166', '#8cff8a', '#b69cff', '#ff9f5e', '#7cf5c8', '#f2f2f2'];
+const PATH_COLORS = ['#1f5fff', '#ff3d9a', '#ffb400', '#00a95c', '#8a4fff', '#ff6c2f', '#00b3a4', '#17141f'];
 
 function loadPref(key, fallback) {
   try {
@@ -30,7 +30,8 @@ const ui = {
   game: null, // engine state
   sum: null,
   history: [], // local undo stack
-  flipped: false,
+  bottom: 0, // the color at the bottom of the board: you, or whoever moves first
+  menuPage: 'home',
   plan: null, // { piece, active, alts: [{ from, seq, key, choices, promo, declared }], cur, cache }
   previewing: false,
   preview: null, // { ok, state?, error?, effects? }
@@ -50,6 +51,9 @@ const ui = {
 let G = gameOf(ui.gameId); // the current game's rules module
 ui.game = Q.initialState(ui.gameId);
 
+// Boards are stored with row 0 at the top; turn them round when the bottom player's home row is row 0.
+const flipped = () => !!G.homeRow && G.homeRow[ui.bottom] === 0;
+
 function setGameId(id) {
   ui.gameId = id;
   G = gameOf(id);
@@ -58,14 +62,13 @@ function setGameId(id) {
 }
 
 // ================================================================ helpers
-const pct = (f) => `${Math.round(f * 100)}%`;
 const sameMove = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const seqStarts = (seq, prefix) => prefix.every((s, i) => seq[i] === s);
 const seqEq = (a, b) => a.length === b.length && seqStarts(a, b);
 const uniq = (xs) => [...new Set(xs)];
 const colorName = (c) => G.colors[c];
 const cls = (c) => `c${c}`;
-const pieceNoun = () => (G.placement ? 'discs' : 'pieces');
+const pieceNoun = (n) => (G.placement ? 'disc' : 'piece') + (n === 1 ? '' : 's');
 
 function result() {
   return ui.mode === 'online' ? ui.roomInfo?.result ?? null : ui.game.result;
@@ -112,7 +115,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 // ================================================================ board rendering
 function displayRC(sq) {
   const r = G.rowOf(sq), c = G.colOf(sq);
-  return ui.flipped ? [7 - r, 7 - c] : [r, c];
+  return flipped() ? [7 - r, 7 - c] : [r, c];
 }
 
 // Majority color / kind of a piece on one square, and whether they vary between worlds.
@@ -128,15 +131,16 @@ function variant(e) {
       best = vk;
     }
   }
-  return { color: best >> 3, kind: best & 7, mixedColor: byColor[0] > 0 && byColor[1] > 0, share0: byColor[0] / e.n, partialKind: kinds.size > 1 };
+  return { color: best >> 3, kind: best & 7, mixedColor: byColor[0] > 0 && byColor[1] > 0, partialKind: kinds.size > 1 };
 }
 
 function buildBoard(el, state, sum) {
   el.innerHTML = '';
+  const flip = flipped();
   const frag = document.createDocumentFragment();
   for (let vr = 0; vr < 8; vr++) {
     for (let vc = 0; vc < 8; vc++) {
-      const r = ui.flipped ? 7 - vr : vr, c = ui.flipped ? 7 - vc : vc;
+      const r = flip ? 7 - vr : vr, c = flip ? 7 - vc : vc;
       const sq = G.sqAt(r, c);
       const cell = document.createElement('div');
       cell.className = 'cell ' + ((r + c) % 2 ? 'dark' : 'light');
@@ -159,9 +163,10 @@ function buildBoard(el, state, sum) {
           const more = document.createElement('div');
           more.className = 'more';
           more.textContent = `+${entries.length - 3}`;
-          more.title = entries.slice(3).map(([id, e]) => `${G.labelOf(id)} (${e.n} of ${sum.W} worlds)`).join(', ');
+          more.title = `Might also be here: ${entries.slice(3).map(([id]) => G.labelOf(id)).join(', ')}`;
           cell.append(more);
         }
+        if (sum.checks.has(sq)) cell.classList.add('check');
       }
       frag.append(cell);
     }
@@ -169,44 +174,26 @@ function buildBoard(el, state, sum) {
   el.append(frag);
 }
 
+// One piece on one square. A piece that is not certainly here (it may be on
+// another square, or captured) is drawn as a see-through ghost.
 function pieceEl(id, e, sum, slot, sq) {
   const d = document.createElement('div');
-  const frac = e.n / sum.W;
   const p = sum.pieces.get(id);
   const v = variant(e);
-  const quantum = p.locs.size > 1 || p.alive < sum.W || v.mixedColor;
-  d.className = `piece ${cls(v.color)}`;
-  if (quantum) d.classList.add('quantum');
+  const ghost = e.n < sum.W;
+  d.className = `piece ${G.id} ${cls(v.color)} k${v.kind}`;
+  if (ghost) d.classList.add('ghost');
+  if (v.mixedColor) d.classList.add('mixed');
   if (slot >= 0) d.classList.add('mini', `slot${Math.min(slot, 3)}`);
   d.dataset.id = id;
-  d.style.setProperty('--frac', frac);
-  if (v.mixedColor) {
-    d.classList.add('mixed');
-    d.style.setProperty('--share0', `${Math.round(v.share0 * 100)}%`);
-  }
-  const label = G.labelOf(id);
-  let title = quantum ? `${label}: here in ${e.n} of ${sum.W} worlds` : label;
-  if (v.mixedColor) title += `; ${colorName(0)} in ${Math.round(v.share0 * e.n)} of those ${e.n}`;
-  if (v.partialKind) title += `; a ${G.kindLabel(v.kind)} in only some of them`;
-  else if (G.kindLabel(v.kind)) title += ` (${G.kindLabel(v.kind)})`;
-  const glyph = G.glyph(v.color, v.kind);
-  if (glyph) {
-    const k = document.createElement('span');
-    k.className = v.partialKind ? 'glyph partial' : 'glyph';
-    k.textContent = glyph + (v.partialKind ? '?' : '');
-    d.append(k);
-  }
-  const checks = sum.checks.get(sq);
-  if (checks && G.kingKind === v.kind && v.color === ui.game.turn) {
-    d.classList.add('check');
-    title += `; in check in ${checks} of ${e.n} worlds`;
-  }
-  if (quantum) {
-    const t = document.createElement('span');
-    t.className = 'tag';
-    if (v.mixedColor) t.textContent = `${frac < 1 ? pct(frac) + ' · ' : ''}${pct(v.share0)} ${colorName(0).toLowerCase()}`;
-    else t.textContent = G.placement ? pct(frac) : `${label} ${pct(frac)}`;
-    d.append(t);
+  let title = G.labelOf(id);
+  if (G.kindLabel(v.kind) && !v.partialKind) title += ` (${G.kindLabel(v.kind)})`;
+  if (p.locs.size > 1) title += `: might be here, or on ${[...p.locs.keys()].filter((s) => s !== sq).map(G.sqName).join(' or ')}`;
+  else if (ghost) title += `: might be here, or ${G.absentWord || 'captured'}`;
+  if (v.mixedColor) title += `: ${colorName(0).toLowerCase()} or ${colorName(1).toLowerCase()}`;
+  if (v.partialKind) {
+    title += `; might be a ${G.kindLabel(v.kind) || 'plain piece'}`;
+    d.append(Object.assign(document.createElement('span'), { className: 'badge', textContent: '?' }));
   }
   d.title = title;
   return d;
@@ -217,64 +204,62 @@ function center(sq) {
   return [c + 0.5, r + 0.5];
 }
 
-// lines: [{ path, color, dashed, width }], dots: [{ sq, color, r }], rings: [{ sq, color }]
-function drawOverlay(el, lines, dots = [], rings = []) {
-  const ns = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('viewBox', '0 0 8 8');
-  svg.setAttribute('class', 'overlay');
-  const defs = document.createElementNS(ns, 'defs');
+// Pairs of squares to join with a line: the places one piece might be.
+function ghostLinks(sum) {
+  const out = [];
+  for (const [id, p] of sum.pieces) {
+    if (p.locs.size < 2) continue;
+    const sqs = [...p.locs.keys()].sort((a, b) => G.colOf(a) - G.colOf(b) || G.rowOf(a) - G.rowOf(b));
+    for (let i = 1; i < sqs.length; i++) out.push({ id, a: sqs[i - 1], b: sqs[i] });
+  }
+  return out;
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+
+// lines: [{ path, color, opacity }]      arrows for planned moves
+// dots:  [{ sq, color, ring }]           squares the piece can go to (a ring where something stands)
+// rings: [{ sq, color }]                 planned placements
+// links: [{ id, a, b }]                  joins the ghosts of one piece
+function drawOverlay(el, lines, dots = [], rings = [], links = []) {
+  const svg = svgEl('svg', { viewBox: '0 0 8 8', class: 'overlay' });
+  const defs = svgEl('defs', {});
   svg.append(defs);
+  for (const l of links) {
+    const [x1, y1] = center(l.a), [x2, y2] = center(l.b);
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    const t = Math.min(0.4, len / 2 - 0.05) / len; // stop short of the pieces themselves
+    const line = svgEl('line', {
+      class: 'link', x1: x1 + (x2 - x1) * t, y1: y1 + (y2 - y1) * t, x2: x2 - (x2 - x1) * t, y2: y2 - (y2 - y1) * t,
+    });
+    line.dataset.id = l.id;
+    svg.append(line);
+  }
   lines.forEach((l, i) => {
     if (l.path.length < 2) return;
     const mid = `m${i}-${Math.random().toString(36).slice(2, 7)}`;
-    const marker = document.createElementNS(ns, 'marker');
-    marker.setAttribute('id', mid);
-    marker.setAttribute('viewBox', '0 0 10 10');
-    marker.setAttribute('refX', '6');
-    marker.setAttribute('refY', '5');
-    marker.setAttribute('markerWidth', '4');
-    marker.setAttribute('markerHeight', '4');
-    marker.setAttribute('orient', 'auto-start-reverse');
-    const tip = document.createElementNS(ns, 'path');
-    tip.setAttribute('d', 'M0,0 L10,5 L0,10 z');
-    tip.setAttribute('fill', l.color);
-    marker.append(tip);
+    const marker = svgEl('marker', { id: mid, viewBox: '0 0 10 10', refX: 6, refY: 5, markerWidth: 3.6, markerHeight: 3.6, orient: 'auto-start-reverse' });
+    marker.append(svgEl('path', { d: 'M0,0 L10,5 L0,10 z', fill: l.color }));
     defs.append(marker);
-    const pl = document.createElementNS(ns, 'polyline');
-    pl.setAttribute('points', l.path.map((s) => center(s).join(',')).join(' '));
-    pl.setAttribute('fill', 'none');
-    pl.setAttribute('stroke', l.color);
-    pl.setAttribute('stroke-width', l.width ?? 0.09);
-    pl.setAttribute('stroke-linecap', 'round');
-    pl.setAttribute('stroke-linejoin', 'round');
-    pl.setAttribute('opacity', l.opacity ?? 0.95);
-    if (l.dashed) pl.setAttribute('stroke-dasharray', '0.15 0.12');
-    pl.setAttribute('marker-end', `url(#${mid})`);
-    svg.append(pl);
+    svg.append(svgEl('polyline', {
+      points: l.path.map((s) => center(s).join(',')).join(' '), fill: 'none', stroke: l.color, 'stroke-width': 0.11,
+      'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: l.opacity ?? 0.9, 'marker-end': `url(#${mid})`,
+    }));
   });
   for (const d of dots) {
     const [x, y] = center(d.sq);
-    const c = document.createElementNS(ns, 'circle');
-    c.setAttribute('cx', x);
-    c.setAttribute('cy', y);
-    c.setAttribute('r', d.r ?? 0.13);
-    c.setAttribute('fill', d.color);
-    c.setAttribute('opacity', d.opacity ?? 0.9);
-    svg.append(c);
+    svg.append(d.ring
+      ? svgEl('circle', { cx: x, cy: y, r: 0.43, fill: 'none', stroke: d.color, 'stroke-width': 0.08, opacity: 0.9 })
+      : svgEl('circle', { cx: x, cy: y, r: 0.15, fill: d.color, opacity: 0.9, stroke: '#17141f', 'stroke-width': 0.035 }));
   }
   for (const d of rings) {
     const [x, y] = center(d.sq);
-    const c = document.createElementNS(ns, 'circle');
-    c.setAttribute('cx', x);
-    c.setAttribute('cy', y);
-    c.setAttribute('r', 0.36);
-    c.setAttribute('fill', 'none');
-    c.setAttribute('stroke', d.color);
-    c.setAttribute('stroke-width', 0.07);
-    c.setAttribute('opacity', d.opacity ?? 0.95);
-    if (d.dashed) c.setAttribute('stroke-dasharray', '0.12 0.1');
-    svg.append(c);
+    svg.append(svgEl('circle', { cx: x, cy: y, r: 0.36, fill: 'none', stroke: d.color, 'stroke-width': 0.08, opacity: 0.95 }));
   }
   el.append(svg);
 }
@@ -487,7 +472,7 @@ function showGhostInfo(id, sq) {
   if (!worlds.length) return;
   const effects = Q.describeChange(ui.game, { game: ui.game.game, worlds }, id);
   const what = G.placement ? `${G.labelOf(id)} is really ${colorName(v.color)}` : `${G.labelOf(id)} is really on ${G.sqName(sq)}`;
-  hint.textContent = `If ${what} (${worlds.length} of ${ui.sum.W} worlds): ` + (effects.length ? effects.join(' · ') : 'nothing else on the board changes.');
+  hint.textContent = `If ${what}: ` + (effects.length ? effects.join(' · ') : 'nothing else on the board changes.');
 }
 
 function commit() {
@@ -522,8 +507,7 @@ function announce(before, after) {
   ui.notes[after.ply - 1] = { worlds: [before.worlds.length, after.worlds.length], effects };
   const mover = colorName(before.turn);
   let html = `<b>${mover}</b> played <b>${esc(Q.fmtMove(ui.gameId, move))}</b>`;
-  if (before.worlds.length !== after.worlds.length) html += ` · worlds ${before.worlds.length} → ${after.worlds.length}`;
-  if (effects.length) html += `<ul>${effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`;
+    if (effects.length) html += `<ul>${effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`;
   toast(html, effects.length ? 6000 : 3000);
 }
 
@@ -555,14 +539,12 @@ function render() {
   const p = ui.plan;
   const acting = canAct();
   const altPath = (a) => (a.from >= 0 ? [a.from, ...a.seq] : a.seq);
+  const cellAt = (sq) => boardEl.querySelector(`.cell[data-sq="${sq}"]`);
+  const occupied = (sq) => ui.sum.squares[sq].size > 0;
   if (!ui.previewing) {
     const last = ui.game.moves[ui.game.moves.length - 1];
-    if (last && !p) {
-      for (const k of last.alts) {
-        const path = G.keyPath(k, last.piece);
-        if (path.length >= 2) lines.push({ path, color: '#ffffff', dashed: true, width: 0.06, opacity: 0.45 });
-        else if (path.length === 1) rings.push({ sq: path[0], color: '#ffffff', dashed: true, opacity: 0.5 });
-      }
+    if (last) {
+      for (const k of last.alts) for (const sq of G.keyPath(k, last.piece)) cellAt(sq)?.classList.add('last');
     }
     if (acting && !G.placement) {
       for (const el of boardEl.querySelectorAll('.piece')) {
@@ -572,14 +554,15 @@ function render() {
     if (acting && G.placement && !p) {
       // Show every square where a disc could go, sized by the share of worlds that allow it.
       for (const c of Q.candidates(ui.game, 0, -1)) {
-        if (c.m.to >= 0) dots.push({ sq: c.m.to, color: PATH_COLORS[0], r: 0.08 + 0.1 * (c.n / ui.sum.W), opacity: 0.7 });
+        if (c.m.to >= 0) dots.push({ sq: c.m.to, color: PATH_COLORS[0], ring: occupied(c.m.to) });
       }
-      for (const d of dots) boardEl.querySelector(`.cell[data-sq="${d.sq}"]`)?.classList.add('target');
+      for (const d of dots) cellAt(d.sq)?.classList.add('target');
     }
     if (p) {
       for (const el of boardEl.querySelectorAll(`.piece[data-id="${p.piece}"]`)) {
         el.classList.add('selected');
-        if (+el.closest('.cell').dataset.sq === p.active) el.classList.add('active');
+        const cell = el.closest('.cell');
+        cell.classList.add(+cell.dataset.sq === p.active ? 'sel' : 'sel-other');
       }
       p.alts.forEach((a, i) => {
         const path = altPath(a);
@@ -587,12 +570,12 @@ function render() {
         else if (path.length === 1) rings.push({ sq: path[0], color: PATH_COLORS[i % PATH_COLORS.length] });
       });
       const nextColor = PATH_COLORS[p.alts.length % PATH_COLORS.length];
-      for (const sq of extSteps()) dots.push({ sq, color: PATH_COLORS[p.cur % PATH_COLORS.length] });
-      for (const sq of firstSteps()) dots.push({ sq, color: nextColor });
-      for (const d of dots) boardEl.querySelector(`.cell[data-sq="${d.sq}"]`)?.classList.add('target');
+      for (const sq of extSteps()) dots.push({ sq, color: PATH_COLORS[p.cur % PATH_COLORS.length], ring: occupied(sq) });
+      for (const sq of firstSteps()) dots.push({ sq, color: nextColor, ring: occupied(sq) });
+      for (const d of dots) cellAt(d.sq)?.classList.add('target');
       // Planned destinations are clickable again to play the move.
       for (const a of p.alts) {
-        if (a.seq.length) boardEl.querySelector(`.cell[data-sq="${a.seq[a.seq.length - 1]}"]`)?.classList.add('target', 'planned');
+        if (a.seq.length) cellAt(a.seq[a.seq.length - 1])?.classList.add('target', 'planned');
       }
     }
   } else if (ui.preview?.ok) {
@@ -601,7 +584,8 @@ function render() {
       if (path.length >= 2) lines.push({ path, color: PATH_COLORS[i % PATH_COLORS.length], opacity: 0.5 });
     });
   }
-  drawOverlay(boardEl, lines, dots, rings);
+  drawOverlay(boardEl, lines, dots, rings, ghostLinks(sum));
+  if (p && !ui.previewing) for (const l of boardEl.querySelectorAll(`.link[data-id="${p.piece}"]`)) l.classList.add('on');
 
   renderStrips();
   renderStatus();
@@ -632,12 +616,11 @@ function stripHTML(color) {
   const turn = !res && ui.game.turn === color ? '<span class="turn">to move</span>' : '';
   return `<span class="chip ${cls(color)}"></span>${conn}
     <span class="who">${colorName(color)}${you}</span>
-    <span>${certain} ${pieceNoun()}${maybe ? ` + ${maybe} maybe` : ''}</span>${turn}`;
+    <span>${certain} ${pieceNoun(certain)}${maybe ? ` + ${maybe} uncertain` : ''}</span>${turn}`;
 }
 function renderStrips() {
-  const bottom = ui.flipped ? 0 : 1;
-  $('#stripTop').innerHTML = stripHTML(1 - bottom);
-  $('#stripBottom').innerHTML = stripHTML(bottom);
+  $('#stripTop').innerHTML = stripHTML(1 - ui.bottom);
+  $('#stripBottom').innerHTML = stripHTML(ui.bottom);
 }
 
 function renderStatus() {
@@ -653,13 +636,13 @@ function renderStatus() {
   $('#status').innerHTML = `
     <div class="turnline">${res ? '' : chip}${turnline}</div>
     <div class="meta">
-      <span>Worlds: <b>${W}</b></span>
-      <span>Ply: <b>${ui.game.ply}</b></span>
-      <button class="btn small" id="tlOpen">Timelines</button>
+      <span class="pill">Move <b>${Math.floor(ui.game.ply / 2) + 1}</b></span>
+      <span class="pill ${W > 1 ? 'quantum' : ''}" title="Every way the game could really have gone so far. Splitting adds worlds; a move that proves something removes them.">${W > 1 ? `<b>${W}</b> possible worlds` : 'No superposition'}</span>
+      <button class="btn small" id="tlOpen">${W > 1 ? 'See the worlds' : 'Replay'}</button>
     </div>
     ${res ? `<div class="result"><strong>${esc(resultText(res))}</strong>
-      ${W > 1 ? `${W} timelines survive, and every one of them is a normal game of ${G.name.toLowerCase()}.` : 'Exactly one timeline survives: the game that really happened.'}
-      <div style="margin-top:8px"><button class="btn small" id="tlOpen2">Replay the real game</button></div></div>` : ''}
+      ${W > 1 ? `${W} worlds survive, and every one of them is a normal game of ${G.name.toLowerCase()}.` : 'One world survives: the game that really happened.'}
+      <div><button class="btn small" id="tlOpen2">${W > 1 ? 'Replay them' : 'Replay the real game'}</button></div></div>` : ''}
     ${ui.mode === 'online' && !ui.connected
       ? '<p class="error">Lost connection to the host. Reconnecting automatically when their game is open again…</p>' : ''}`;
   $('#tlOpen').onclick = openTimeline;
@@ -668,9 +651,10 @@ function renderStatus() {
 }
 
 function renderRoom() {
-  const el = $('#roomPanel');
+  const el = $('#roomPanel'), invite = $('#invite');
   if (ui.mode !== 'online' || !ui.roomInfo) {
     el.hidden = true;
+    invite.hidden = true;
     return;
   }
   el.hidden = false;
@@ -690,22 +674,43 @@ function renderRoom() {
       ? '<p class="muted">Rematch requested, waiting for opponent…</p>'
       : info.rematch[1 - ui.me] ? '<p><b>Opponent wants a rematch.</b></p>' : '';
   }
+  const copyLabel = ui.copied ? 'Link copied ✓' : 'Copy invite link';
   el.innerHTML = `
     <h3>Online game · ${G.name}</h3>
     <div class="row"><span class="code">${info.room}</span>
-      <button class="btn small" id="copyLink">Copy invite link</button></div>
-    ${waiting ? '<p class="muted">Waiting for an opponent to join. Send them the link or the code.</p>' : ''}
+      <button class="btn small" data-copy>${copyLabel}</button></div>
+    ${waiting ? '<p class="muted">Waiting for your opponent to open the link.</p>' : ''}
     ${ui.me === null ? '<p class="muted">Both seats are taken, so you are watching.</p>' : ''}
     ${ui.isHost ? '<p class="muted">Your browser is hosting this game. Keep this tab open, or the game pauses until you come back.</p>' : ''}
     ${draw}${rematch}`;
-  $('#copyLink').onclick = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
-      toast('Invite link copied.', 2000);
-    } catch {
-      prompt('Copy this link:', link);
-    }
-  };
+
+  // Until the second player arrives, the invite link is the only thing that matters: put it over the board.
+  invite.hidden = !waiting;
+  if (waiting) {
+    invite.innerHTML = `<div class="invite-card">
+      <h2>Invite your opponent</h2>
+      <p>Send this link to a friend. The game starts as soon as they open it.</p>
+      <input class="invite-link" readonly value="${esc(link)}" aria-label="Invite link">
+      <button class="btn primary big" data-copy>${copyLabel}</button>
+      <p class="muted">Or give them the code <b class="code">${info.room}</b>${ui.me !== null ? ` · You play ${colorName(ui.me).toLowerCase()}` : ''}</p>
+    </div>`;
+    invite.querySelector('.invite-link').onclick = (e) => e.target.select();
+  }
+  for (const b of document.querySelectorAll('[data-copy]')) {
+    b.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(link);
+        ui.copied = true;
+        renderRoom();
+        setTimeout(() => {
+          ui.copied = false;
+          if (ui.mode === 'online') renderRoom();
+        }, 2500);
+      } catch {
+        prompt('Copy this link:', link);
+      }
+    };
+  }
   const yes = $('#drawYes'), no = $('#drawNo');
   if (yes) yes.onclick = () => sendNet({ t: 'answerDraw', accept: true });
   if (no) no.onclick = () => sendNet({ t: 'answerDraw', accept: false });
@@ -720,7 +725,7 @@ function choicesHTML(a, i) {
   let html = '';
   if (a.choices.some((c) => c.m.promo)) {
     html += `<div class="choice"><span>Promote to</span>${G.promoOrder.map((pr) =>
-      `<button class="btn tiny ${a.promo === pr ? 'on' : ''}" data-promo="${pr}" data-alt="${i}">${G.glyph(ui.game.turn, PROMO_KIND[pr])}</button>`).join('')}</div>`;
+      `<button class="btn tiny ${a.promo === pr ? 'on' : ''}" data-promo="${pr}" data-alt="${i}" title="${G.kindLabel(PROMO_KIND[pr])}"><span class="pc ${cls(ui.game.turn)} k${PROMO_KIND[pr]}"></span></button>`).join('')}</div>`;
   }
   const plain = a.choices.some((c) => !G.isCaptureKey?.(c.key)), declared = a.choices.some((c) => G.isCaptureKey?.(c.key));
   if (plain && declared) {
@@ -728,7 +733,7 @@ function choicesHTML(a, i) {
     const victims = [...ui.sum.squares[target]].filter(([id]) => ownerOf(id) !== ui.game.turn).map(([id]) => G.labelOf(id));
     if (victims.length) {
       html += `<label class="choice"><input type="checkbox" data-declare="${i}" ${a.declared ? 'checked' : ''}>
-        <span>Declare the capture: only in worlds where ${esc(victims.join(' / '))} is really there</span></label>`;
+        <span>Declare the capture: this insists ${esc(victims.join(' / '))} is really there</span></label>`;
     }
   }
   return html;
@@ -743,51 +748,50 @@ function renderPlan() {
     body = ui.pending ? '<p class="hint">Sending move…</p>' : (ui.mode === 'ai' ? '<p class="hint">The computer is thinking…</p>' : '<p class="hint">Waiting for the other player.</p>');
   } else if (!p) {
     body = G.placement
-      ? `<p class="hint">Click a square to place a disc. <b>Click it again</b> to play, or pick a second square first to place it in both at once (a split).</p>`
-      : `<p class="hint">Click one of your pieces, then where it should go.
-      <b>Click that square again</b> to play the move, or pick a second square first to split the piece.</p>`;
+      ? `<p class="hint">Click a square, then <b>click it again</b> to place a disc there.</p>
+         <p class="hint"><b class="q">Split:</b> pick a second square before confirming, and the disc goes on both.</p>`
+      : `<p class="hint">Click a piece, click where it should go, then <b>click that square again</b> to play.</p>
+         <p class="hint"><b class="q">Split:</b> pick a second square before confirming, and the piece goes to both.</p>`;
   } else {
     const W = ui.sum.W;
     let html = `<h3>${G.placement ? 'Placing a disc' : `Moving ${esc(G.labelOf(p.piece))}`}</h3>`;
     const info = G.placement ? null : pieceInfo(p.piece);
     const locs = G.placement ? [[-1, W]] : [...info.locs.entries()].sort((a, b) => b[1] - a[1]);
-    for (const [sq, n] of locs) {
+    for (const [sq] of locs) {
       const mine = p.alts.map((x, i) => [x, i]).filter(([x]) => x.from === sq);
       const rows = mine.map(([x, i]) => `<div class="pathrow"><span class="sw" style="background:${PATH_COLORS[i % PATH_COLORS.length]}"></span>
           ${esc(G.isPass(x.key || '') ? 'Pass (where no move exists)' : altLabel(x))}
           <button class="x" data-rm="${i}" aria-label="Remove">✕</button></div>${choicesHTML(x, i)}`).join('');
       const ruled = !mine.length && p.alts.length
-        ? `<div class="ruled">Not moved, so the worlds where ${esc(G.labelOf(p.piece))} is here are ruled out</div>` : '';
+        ? `<div class="ruled">Not moved from here, so this ghost disappears</div>` : '';
       const none = !planCands(sq).length ? '<div class="ruled">No legal move from here</div>' : '';
       html += `<div class="loc ${sq === p.active ? 'active' : ''}" data-loc="${sq}">
-        <div class="head"><span>${sq >= 0 ? `From ${G.sqName(sq)}` : 'New disc'}</span><span>${W > 1 && sq >= 0 ? (n === W ? 'all worlds' : `${n} of ${W} worlds`) : ''}</span></div>
+        <div class="head">${sq >= 0 ? `From ${G.sqName(sq)}` : 'New disc'}</div>
         ${rows || none ? `<div class="paths">${rows}${none}</div>` : ''}${ruled}</div>`;
     }
     if (info && info.alive < W && p.alts.length) {
-      html += `<div class="ruled">${esc(G.labelOf(p.piece))} is captured in ${W - info.alive} worlds; moving it rules those out.</div>`;
+      html += `<div class="ruled">${esc(G.labelOf(p.piece))} might have been captured; moving it proves it wasn't.</div>`;
     }
     if (hasPassOption()) {
       const passing = p.alts.some((a) => G.isPass(a.key || ''));
-      const n = planCands(p.active).find((c) => G.isPass(c.key)).n;
       html += `<label class="choice"><input type="checkbox" id="passToggle" ${passing ? 'checked' : ''}>
-        <span>Pass in the ${n} of ${W} worlds where you have no legal placement</span></label>`;
+        <span>Pass in the worlds where you have no legal placement</span></label>`;
     }
     const pv = ui.preview;
     if (pv && !pv.ok) html += `<p class="err">${esc(pv.error)}</p>`;
     if (pv?.ok) {
       const W2 = pv.state.worlds.length;
       const split = p.alts.some((x, i) => p.alts.findIndex((y) => y.from === x.from) !== i);
-      html += `<p class="summary">Worlds: <b>${W}</b> → <b>${W2}</b>${split ? ' · split' : ''}</p>`;
-      if (W2 < W) html += '<p class="ruled">This move collapses the board:</p>';
+      if (W2 !== W) html += `<p class="summary">${split && W2 > W ? 'Splits' : 'Collapses'} the board: <b>${W}</b> → <b>${W2}</b> possible world${W2 === 1 ? '' : 's'}</p>`;
       if (pv.effects.length) html += `<ul class="effects">${pv.effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`;
       if (pv.state.result) html += `<p class="summary"><b>${esc(resultText(pv.state.result))}</b></p>`;
       const ends = uniq(p.alts.filter((x) => x.seq.length).map((x) => G.sqName(x.seq[x.seq.length - 1])));
       if (ends.length) html += `<p class="hint">Click ${ends.join(' or ')} again (or press Enter) to play it.</p>`;
     }
     html += `<div class="actions">
-      <button class="btn primary" id="commitBtn" ${pv?.ok ? '' : 'disabled'}>Commit move ⏎</button>
-      <button class="btn" id="previewBtn" ${pv?.ok ? '' : 'disabled'}>Hold to preview</button>
-      <button class="btn subtle" id="clearBtn">Clear</button></div>`;
+      <button class="btn primary" id="commitBtn" ${pv?.ok ? '' : 'disabled'}>Play move</button>
+      <button class="btn" id="previewBtn" ${pv?.ok ? '' : 'disabled'} title="Hold to see the board after this move">Hold to preview</button>
+      <button class="btn subtle" id="clearBtn">Cancel</button></div>`;
     body = html;
   }
   el.innerHTML = body;
@@ -879,7 +883,7 @@ function renderActionBar() {
     line = `<b>${esc(label)}</b> selected · tap where it should go`;
   } else if (pv?.ok) {
     const W = ui.sum.W, W2 = pv.state.worlds.length;
-    line = `<b>${esc(Q.fmtMove(ui.gameId, quantumMove()))}</b>${W !== W2 ? ` · worlds ${W} → ${W2}` : ''}`;
+    line = `<b>${esc(Q.fmtMove(ui.gameId, quantumMove()))}</b>${W !== W2 ? ` · ${W} → ${W2} worlds` : ''}`;
     if (pv.effects.length) extra = `<div class="ab-effects">${esc(pv.effects.join(' · '))}</div>`;
   } else {
     line = `<b>${esc(label)}</b>`;
@@ -909,8 +913,8 @@ function renderLog() {
   el.innerHTML = moves.map((m, i) => {
     const n = ui.notes[i];
     let extra = '';
-    if (n && (n.effects.length || n.worlds[0] !== n.worlds[1])) {
-      extra = `<div class="note">worlds ${n.worlds[0]} → ${n.worlds[1]}${n.effects.length ? ` · ${esc(n.effects.join(' · '))}` : ''}</div>`;
+    if (n && (n.effects.length || n.worlds[1] > n.worlds[0])) {
+      extra = `<div class="note">${[n.worlds[1] > n.worlds[0] ? 'split' : '', ...n.effects].filter(Boolean).map(esc).join(' · ')}</div>`;
     }
     return `<li class="${cls(i % 2)}">${esc(Q.fmtMove(ui.gameId, m))}${extra}</li>`;
   }).join('');
@@ -946,7 +950,7 @@ function renderControls() {
       btns.push(`<button class="btn primary" id="rematchBtn" ${ui.roomInfo?.rematch[ui.me] ? 'disabled' : ''}>Rematch</button>`);
     }
   }
-  btns.push('<button class="btn" id="flipBtn">Flip board</button>');
+  if (G.homeRow) btns.push('<button class="btn" id="flipBtn">Flip board</button>');
   btns.push('<button class="btn subtle" id="menuBtn">Main menu</button>');
   el.innerHTML = btns.join('');
   const on = (id, fn) => {
@@ -974,12 +978,12 @@ function renderControls() {
   on('#resignBtn', () => confirm('Resign this game?') && sendNet({ t: 'resign' }));
   on('#rematchBtn', () => sendNet({ t: 'rematch' }));
   on('#flipBtn', () => {
-    ui.flipped = !ui.flipped;
+    ui.bottom = 1 - ui.bottom;
     render();
   });
   on('#menuBtn', () => {
     if (ui.mode === 'local' && ui.game.ply && !result() && !confirm('Leave this game?')) return;
-    showLobby();
+    showLobby('home');
   });
 }
 
@@ -990,12 +994,12 @@ function openTimeline() {
   const worlds = ui.game.worlds;
   const sel = $('#tlSelect');
   const n = Math.min(worlds.length, 200);
-  sel.innerHTML = Array.from({ length: n }, (_, i) => `<option value="${i}">${i + 1} of ${worlds.length}</option>`).join('');
+  sel.innerHTML = Array.from({ length: n }, (_, i) => `<option value="${i}">World ${i + 1} of ${worlds.length}</option>`).join('');
   sel.parentElement.hidden = worlds.length < 2;
   const name = G.name.toLowerCase();
   $('#tlIntro').textContent = worlds.length > 1
-    ? `${worlds.length} possible worlds are still alive. Each one is an ordinary game of ${name} where every turn one legal move was made. Pick one and step through it.`
-    : `Only one world is left, and this is it: an ordinary game of ${name} where every turn one legal move was made.`;
+    ? `There are ${worlds.length} ways this game could really have gone. Each is an ordinary game of ${name}, one legal move per turn. Pick one and step through it.`
+    : `Nothing is in superposition, so this is the game that really happened: an ordinary game of ${name}, one legal move per turn.`;
   loadTimeline(0);
   $('#timelineDlg').showModal();
 }
@@ -1019,7 +1023,7 @@ function renderTimeline() {
   drawOverlay(el, path.length >= 2 ? [{ path, color: PATH_COLORS[0] }] : [], [], path.length === 1 ? [{ sq: path[0], color: PATH_COLORS[0] }] : []);
   $('#tlLabel').textContent = tl.step === 0
     ? 'Start position'
-    : `Ply ${tl.step}: ${colorName((tl.step - 1) % 2)} ${G.fmtClassical ? G.fmtClassical(m) : G.fmtAlt(m.key)}`;
+    : `${tl.step} of ${tl.moves.length}: ${colorName((tl.step - 1) % 2)} ${G.fmtClassical ? G.fmtClassical(m) : G.fmtAlt(m.key)}`;
 }
 
 $('#tlSelect').onchange = (e) => loadTimeline(+e.target.value);
@@ -1091,13 +1095,19 @@ function makePeer(id) {
   return id ? new window.Peer(id, { debug: 1 }) : new window.Peer({ debug: 1 });
 }
 
+// The "connecting" page, shown while an online game is being created or joined.
 function lobbyStatus(text) {
   $('#lobbyStatus').textContent = text;
+  if (text) showPage('connect');
+}
+
+function lobbyError(message) {
+  for (const el of document.querySelectorAll('.lobby-error')) el.textContent = message;
 }
 
 function failToLobby(message) {
   showLobby();
-  $('#lobbyError').textContent = message;
+  lobbyError(message);
 }
 
 const NETWORK_ERRORS = ['network', 'server-error', 'socket-error', 'socket-closed', 'disconnected', 'webrtc'];
@@ -1321,7 +1331,7 @@ function syncOnline(msg) {
     ui.notes = [];
   }
   if (ui.mode !== 'online') enterGame('online');
-  if (first || prevMe !== ui.me) ui.flipped = ui.me !== null && !!G.homeRow && G.homeRow[ui.me] === 0;
+  if (first || prevMe !== ui.me) ui.bottom = ui.me ?? 0; // you sit at the bottom; spectators see the first player there
 
   const cur = ui.game.moves;
   let st = ui.game;
@@ -1357,66 +1367,66 @@ function syncOnline(msg) {
 }
 
 // ================================================================ lobby / modes
+function showPage(name) {
+  for (const id of ['home', 'setup', 'connect', 'game']) $(`#${id}`).hidden = id !== name;
+  scrollTo(0, 0);
+}
+
 function enterGame(mode) {
   ui.mode = mode;
   ui.autoPass = -1;
   document.title = `Quantum ${G.name}`;
-  $('#lobby').hidden = true;
-  $('#game').hidden = false;
+  showPage('game');
 }
 
-function showLobby() {
+// Leaves any game and shows a menu page: 'home' (pick a game) or 'setup' (pick how to play it).
+function showLobby(page = ui.menuPage) {
   teardownNet();
   cancelAi();
   Object.assign(ui, {
     mode: null, game: Q.initialState(ui.gameId), history: [], plan: null, preview: null, isHost: false, notes: [],
-    me: null, room: null, roomInfo: null, pending: false, connected: false, flipped: false,
+    me: null, room: null, roomInfo: null, pending: false, connected: false, bottom: 0, copied: false, menuPage: page,
   });
-  history.replaceState(null, '', location.pathname);
-  document.title = 'Quantum Games';
-  $('#game').hidden = true;
-  $('#lobby').hidden = false;
-  $('#lobbyError').textContent = '';
-  lobbyStatus('');
+  history.replaceState(null, '', page === 'setup' ? `${location.pathname}?game=${ui.gameId}` : location.pathname);
+  document.title = page === 'setup' ? `Quantum ${G.name}` : 'Quantum Games';
+  lobbyError('');
+  $('#lobbyStatus').textContent = '';
   renderLobby();
+  showPage(page);
 }
 
+// A corner of each game with one piece in two places, for the game picker.
 const LOBBY_DIAGRAMS = {
-  checkers: { rows: [2, 4], cols: [1, 4], pieces: [[2, 1, 0], [3, 2, 0, { frac: 0.5 }], [3, 4, 0, { frac: 0.5 }], [4, 1, 1], [4, 3, 1]] },
-  chess: { rows: [5, 7], cols: [3, 6], pieces: [[7, 3, 0, { kind: 1, frac: 0.5 }], [5, 4, 0, { kind: 1, frac: 0.5 }], [7, 5, 0, { kind: 5 }], [6, 4, 0, { kind: 0 }], [5, 6, 1, { kind: 2 }]] },
-  reversi: { rows: [3, 5], cols: [2, 5], pieces: [[3, 3, 0], [4, 3, 1, { share0: 0.5 }], [4, 4, 0], [3, 4, 1], [5, 2, 0, { frac: 0.5 }], [5, 5, 0, { frac: 0.5 }]] },
+  checkers: { rows: [2, 4], cols: [1, 4], pieces: [[2, 1, 0], [3, 2, 0, { ghost: 'a' }], [3, 4, 0, { ghost: 'a' }], [4, 1, 1], [4, 3, 1]] },
+  chess: { rows: [5, 7], cols: [3, 6], pieces: [[5, 3, 0, { kind: 1, ghost: 'a' }], [5, 5, 0, { kind: 1, ghost: 'a' }], [7, 5, 0, { kind: 5 }], [6, 4, 0, { kind: 0 }], [6, 5, 0, { kind: 0 }], [5, 6, 1, { kind: 2 }]] },
+  reversi: { rows: [3, 5], cols: [2, 5], pieces: [[3, 3, 0], [4, 3, 1, { mixed: true }], [4, 4, 0], [3, 4, 1], [5, 2, 0, { ghost: true }], [5, 5, 0, { ghost: true }]] },
 };
-const TAGLINES = {
-  checkers: 'Jump a ghost to prove it was real. Move onto one to prove it wasn\'t.',
-  chess: 'Split your knight, slide through ghosts, and give check across worlds. Full chess rules.',
-  reversi: 'A move must flip something, so almost every placement measures the board. Discs end up half yours.',
-};
+
+const radioValue = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
+function setRadio(name, value) {
+  const el = document.querySelector(`input[name="${name}"][value="${value}"]`);
+  if (el) el.checked = true;
+}
 
 function renderLobby() {
   for (const tile of document.querySelectorAll('.tile[data-game]')) {
-    tile.classList.toggle('on', tile.dataset.game === ui.gameId);
-    tile.setAttribute('aria-pressed', tile.dataset.game === ui.gameId);
-    if (!tile.dataset.built) {
-      tile.dataset.built = '1';
-      tile.querySelector('.tile-diagram').append(miniBoard(gameOf(tile.dataset.game), LOBBY_DIAGRAMS[tile.dataset.game]));
-    }
+    if (tile.dataset.built) continue;
+    tile.dataset.built = '1';
+    tile.querySelector('.tile-diagram').append(miniBoard(gameOf(tile.dataset.game), LOBBY_DIAGRAMS[tile.dataset.game]));
+    // The two ghosts fade in and out in turn: which one is real?
+    tile.querySelectorAll('.piece.ghost').forEach((g, i) => (g.style.animationDelay = `${-1.6 * i}s`));
   }
-  $('#heroTitle').textContent = `${G.name} where a piece can be in two places at once.`;
-  $('#heroText').textContent = TAGLINES[ui.gameId];
-  for (const sel of [$('#aiColor'), $('#colorPref')]) {
-    sel.options[sel.id === 'aiColor' ? 0 : 1].textContent = `${G.colors[0]} (first)`;
-    sel.options[sel.id === 'aiColor' ? 1 : 2].textContent = G.colors[1];
-  }
-  $('#aiBtn').textContent = `Play ${G.name.toLowerCase()} vs computer`;
-  $('#localBtn').textContent = `Start local ${G.name.toLowerCase()}`;
-  $('#createBtn').textContent = `Create online ${G.name.toLowerCase()} game`;
+  $('#setupName').textContent = G.name;
+  $('#setupDiagram').replaceChildren(miniBoard(G, LOBBY_DIAGRAMS[ui.gameId]));
+  for (const el of document.querySelectorAll('[data-color-name]')) el.textContent = G.colors[+el.dataset.colorName];
+  $('#firstNote').textContent = `${G.colors[0]} moves first.`;
 }
 
 for (const tile of document.querySelectorAll('.tile[data-game]')) {
   tile.onclick = () => {
     setGameId(tile.dataset.game);
-    ui.game = Q.initialState(ui.gameId);
-    renderLobby();
+    history.pushState(null, '', location.pathname); // so the browser's Back button returns to the game picker
+    showLobby('setup');
   };
 }
 
@@ -1495,14 +1505,14 @@ function maybeAiMove() {
 }
 
 function startAi() {
-  const level = $('#aiLevel').value;
-  let color = $('#aiColor').value;
+  const level = radioValue('aiLevel') || 'medium';
+  let color = radioValue('aiColor') || '0';
   if (color === 'random') color = Math.random() < 0.5 ? '0' : '1';
   savePref('qg-ai-level', level);
   showLobby();
   ui.aiLevel = level;
   ui.aiColor = 1 - +color; // the computer plays the other side
-  ui.flipped = !!G.homeRow && G.homeRow[+color] === 0; // your pieces at the bottom
+  ui.bottom = +color; // your pieces at the bottom
   enterGame('ai');
   render();
   maybeAiMove();
@@ -1515,7 +1525,7 @@ function startLocal() {
 }
 
 function createOnline() {
-  const v = $('#colorPref').value;
+  const v = radioValue('colorPref') || 'random';
   const color = v === 'random' ? 'random' : +v;
   showLobby();
   startHosting(randomCode(), { color, fresh: true });
@@ -1524,7 +1534,7 @@ function createOnline() {
 function openRoom(code) {
   code = normalizeCode(code);
   if (code.length !== 5) {
-    $('#lobbyError').textContent = 'Game codes are 5 characters.';
+    lobbyError('Game codes are 5 characters.');
     return;
   }
   showLobby();
@@ -1553,7 +1563,7 @@ addEventListener('pageshow', (e) => {
 
 $('#localBtn').onclick = startLocal;
 $('#aiBtn').onclick = startAi;
-$('#aiLevel').value = loadPref('qg-ai-level', 'medium');
+setRadio('aiLevel', loadPref('qg-ai-level', 'medium'));
 $('#createBtn').onclick = createOnline;
 $('#joinForm').onsubmit = (e) => {
   e.preventDefault();
@@ -1562,6 +1572,14 @@ $('#joinForm').onsubmit = (e) => {
 const help = setupHelp($('#rulesDlg'), () => G);
 $('#rulesBtn').onclick = () => help.open();
 $('#heroHelpBtn').onclick = () => help.open();
+$('#backBtn').onclick = () => showLobby('home');
+$('#cancelConnect').onclick = () => showLobby();
+// Browser Back/Forward between the game picker and a game's page.
+addEventListener('popstate', () => {
+  const g = new URLSearchParams(location.search).get('game');
+  if (GAME_IDS.includes(g)) setGameId(g);
+  showLobby(GAME_IDS.includes(g) ? 'setup' : 'home');
+});
 for (const b of document.querySelectorAll('[data-close]')) b.onclick = () => b.closest('dialog').close();
 for (const d of document.querySelectorAll('dialog')) {
   d.addEventListener('click', (e) => {
@@ -1575,15 +1593,17 @@ boardEl.addEventListener('pointerover', (e) => {
   if (!el) return;
   const id = +el.dataset.id;
   for (const g of boardEl.querySelectorAll(`.piece[data-id="${id}"]`)) g.classList.add('linked');
+  for (const l of boardEl.querySelectorAll(`.link[data-id="${id}"]`)) l.classList.add('on');
   showGhostInfo(id, +el.closest('.cell').dataset.sq);
 });
 boardEl.addEventListener('pointerout', (e) => {
   const el = e.target.closest('.piece');
   if (!el) return;
   for (const g of boardEl.querySelectorAll('.piece.linked')) g.classList.remove('linked');
+  for (const l of boardEl.querySelectorAll('.link.on')) l.classList.toggle('on', +l.dataset.id === ui.plan?.piece);
 });
 document.addEventListener('keydown', (e) => {
-  if (ui.mode === null || e.target.closest('dialog, input, select, textarea')) return;
+  if (ui.mode === null || e.target.closest?.('dialog, input, select, textarea')) return;
   if (e.key === 'Enter') commit();
   else if (e.key === 'Escape') {
     clearPlan();
@@ -1596,7 +1616,7 @@ document.addEventListener('keydown', (e) => {
 
 // ================================================================ start
 setGameId(ui.gameId);
-showLobby();
+showLobby(GAME_IDS.includes(params.get('game')) ? 'setup' : 'home');
 const roomParam = params.get('room');
 if (roomParam) {
   $('#joinCode').value = normalizeCode(roomParam);

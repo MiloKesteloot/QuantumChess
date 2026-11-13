@@ -11,8 +11,9 @@ const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
 };
-const ALLOWED = /^\/(index\.html|style\.css|(?!server\.js)[a-z-]+\.js|shared\/[a-z-]+\.js|shared\/games\/[a-z-]+\.js)$/;
+const ALLOWED = /^\/(index\.html|style\.css|(?!server\.js)[a-z-]+\.js|shared\/[a-z-]+\.js|shared\/games\/[a-z-]+\.js|pieces\/[a-zA-Z]+\.svg)$/;
 
 http.createServer((req, res) => {
   const url = req.url.split('?')[0];

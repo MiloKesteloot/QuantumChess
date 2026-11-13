@@ -288,10 +288,8 @@ export function describeChange(before, after, movingPiece, move = null) {
     if (s0.size === 1 && s1.size === 1 && !s1.has('\0')) continue;
     const label = g.labelOf(id);
     if (!s1.size || (s1.size === 1 && s1.has('\0'))) out.push(`${label} ${absent}`);
-    else if (s1.has('\0') && !s0.has('\0')) {
-      const dead = sa.W - sa.pieces.get(id).alive;
-      out.push(`${label} ${absent} in ${dead} of ${sa.W} worlds`);
-    } else if ([...s1].every((x) => s0.has(x))) out.push(`${label} collapses → ${fmt(s1)}`);
+    else if (s1.has('\0') && !s0.has('\0')) out.push(`${label} might be ${absent}`);
+    else if ([...s1].every((x) => s0.has(x))) out.push(`${label} collapses → ${fmt(s1)}`);
     else if (s0.size) out.push(`${label} now ${fmt(s1)}`);
   }
   return out;
