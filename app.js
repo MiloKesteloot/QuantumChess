@@ -5,7 +5,7 @@ import { setupHelp, miniBoard } from './help.js';
 
 const $ = (s) => document.querySelector(s);
 const boardEl = $('#board');
-const PATH_COLORS = ['#1f5fff', '#ff3d9a', '#ffb400', '#00a95c', '#8a4fff', '#ff6c2f', '#00b3a4', '#17141f'];
+const PATH_COLORS = ['#3461d1', '#e9558f', '#eea43a', '#2e9a6b', '#7a5cc9', '#e06a3c', '#2a9a9c', '#1c1a28'];
 
 function loadPref(key, fallback) {
   try {
@@ -32,7 +32,7 @@ const ui = {
   history: [], // local undo stack
   bottom: 0, // the color at the bottom of the board: you, or whoever moves first
   menuPage: 'home',
-  plan: null, // { piece, active, alts: [{ from, seq, key, choices, promo, declared }], cur, cache }
+  plan: null, // { piece, pieces, active, alts: [{ piece, from, seq, key, choices, promo, declared }], cur, cache }
   previewing: false,
   preview: null, // { ok, state?, error?, effects? }
   me: null, // online seat (0/1) or null for spectator
@@ -255,7 +255,7 @@ function drawOverlay(el, lines, dots = [], rings = [], links = []) {
     const [x, y] = center(d.sq);
     svg.append(d.ring
       ? svgEl('circle', { cx: x, cy: y, r: 0.43, fill: 'none', stroke: d.color, 'stroke-width': 0.08, opacity: 0.9 })
-      : svgEl('circle', { cx: x, cy: y, r: 0.15, fill: d.color, opacity: 0.9, stroke: '#17141f', 'stroke-width': 0.035 }));
+      : svgEl('circle', { cx: x, cy: y, r: 0.15, fill: d.color, opacity: 0.9, stroke: '#1c1a28', 'stroke-width': 0.035 }));
   }
   for (const d of rings) {
     const [x, y] = center(d.sq);
@@ -265,14 +265,15 @@ function drawOverlay(el, lines, dots = [], rings = [], links = []) {
 }
 
 // ================================================================ planning
-function planCands(origin) {
+function planCands(origin, piece = ui.plan.piece) {
   const p = ui.plan;
-  if (!p.cache.has(origin)) p.cache.set(origin, Q.candidates(ui.game, p.piece, origin));
-  return p.cache.get(origin);
+  const k = `${piece}:${origin}`;
+  if (!p.cache.has(k)) p.cache.set(k, Q.candidates(ui.game, piece, origin));
+  return p.cache.get(k);
 }
 // Candidate entries whose click sequence matches the alternative exactly.
 function matchesOf(alt) {
-  return planCands(alt.from).filter((c) => seqEq(c.m.seq, alt.seq));
+  return planCands(alt.from, alt.piece).filter((c) => seqEq(c.m.seq, alt.seq));
 }
 // Picks the key of an alternative from its matches and the player's choices
 // (promotion piece, declared capture).
@@ -306,21 +307,42 @@ function extSteps() {
   const p = ui.plan;
   if (!p || p.cur < 0) return [];
   const a = p.alts[p.cur];
-  return uniq(planCands(a.from).filter((c) => c.m.seq.length > a.seq.length && seqStarts(c.m.seq, a.seq)).map((c) => c.m.seq[a.seq.length]));
+  return uniq(planCands(a.from, a.piece).filter((c) => c.m.seq.length > a.seq.length && seqStarts(c.m.seq, a.seq)).map((c) => c.m.seq[a.seq.length]));
 }
 function firstSteps() {
   const p = ui.plan;
   if (!p || p.active == null) return [];
   if (p.cur >= 0 && !isComplete(p.alts[p.cur])) return [];
-  const mine = p.alts.filter((x) => x.from === p.active && x.seq.length);
-  if (mine.length >= 2) return [];
+  const mine = p.alts.filter((x) => x.piece === p.piece && x.from === p.active && x.seq.length);
+  if (mine.length >= (p.pieces.length > 1 ? 1 : 2)) return []; // a two-piece move can't also split
   const used = mine.map((x) => x.seq[0]);
   return uniq(planCands(p.active).filter((c) => c.m.seq.length).map((c) => c.m.seq[0])).filter((s) => !used.includes(s));
 }
 const hasPassOption = () => !!ui.plan && planCands(ui.plan.active).some((c) => G.isPass(c.key));
 const pieceInfo = (id) => ui.sum.pieces.get(id);
 function newPlan(piece, origin) {
-  ui.plan = { piece, alts: [], active: origin, cur: -1, cache: new Map() };
+  ui.plan = { piece, pieces: [piece], alts: [], active: origin, cur: -1, cache: new Map() };
+}
+// Does the plan split a piece (two alternatives from one place)?
+function planSplits() {
+  const seen = new Set();
+  for (const a of ui.plan.alts) {
+    const k = `${a.piece}:${a.from}`;
+    if (seen.has(k)) return true;
+    seen.add(k);
+  }
+  return false;
+}
+// With two-piece moves on, the plan can take a second piece once the first has a move and no split.
+function canAddPiece(pick) {
+  const p = ui.plan;
+  return !!ui.game.opts?.multi && !G.placement && p.pieces.length === 1 && pick !== p.piece
+    && p.alts.length > 0 && p.alts.every(isComplete) && !planSplits();
+}
+// After removing alternatives: forget a second piece that no longer has a move.
+function prunePieces() {
+  const p = ui.plan;
+  p.pieces = p.pieces.filter((id) => id === p.piece || p.alts.some((a) => a.piece === id));
 }
 function clearPlan() {
   ui.plan = null;
@@ -328,14 +350,18 @@ function clearPlan() {
 }
 function addStep(sq) {
   const p = ui.plan;
-  const a = { from: p.active, seq: [sq], key: null };
+  const a = { piece: p.piece, from: p.active, seq: [sq], key: null };
   p.alts.push(a);
   p.cur = p.alts.length - 1;
   resolve(a);
 }
 function quantumMove() {
   const p = ui.plan;
-  return { piece: p.piece, alts: p.alts.map((a) => a.key) };
+  const parts = p.pieces
+    .map((id) => ({ piece: id, alts: p.alts.filter((a) => a.piece === id).map((a) => a.key) }))
+    .filter((x) => x.alts.length);
+  if (parts.length > 1) return { ...parts[0], also: parts[1] };
+  return parts[0] || { piece: p.piece, alts: [] };
 }
 
 function computePreview() {
@@ -375,6 +401,7 @@ function undoPlanStep() {
   } else {
     p.alts.splice(i, 1);
     p.cur = -1;
+    prunePieces();
   }
   afterPlanChange();
 }
@@ -438,7 +465,13 @@ function onBoardClick(ev) {
     pick = mine[(i + 1) % mine.length];
   }
   if (pick !== null) {
-    if (!p || p.piece !== pick) newPlan(pick, sq);
+    if (p && (p.pieces.includes(pick) || canAddPiece(pick))) {
+      // Switch to (or add) the other piece of a two-piece move.
+      if (!p.pieces.includes(pick)) p.pieces.push(pick);
+      p.piece = pick;
+      p.active = sq;
+      p.cur = -1;
+    } else if (!p || p.piece !== pick) newPlan(pick, sq);
     else {
       p.active = sq;
       p.cur = -1;
@@ -521,7 +554,7 @@ function maybeAutoPass() {
   setTimeout(() => {
     if (ui.autoPass !== ui.game.ply || !canAct()) return;
     newPlan(0, -1);
-    ui.plan.alts.push({ from: -1, seq: [], key: 'pass' });
+    ui.plan.alts.push({ piece: 0, from: -1, seq: [], key: 'pass' });
     computePreview();
     commit();
   }, 1200);
@@ -544,7 +577,9 @@ function render() {
   if (!ui.previewing) {
     const last = ui.game.moves[ui.game.moves.length - 1];
     if (last) {
-      for (const k of last.alts) for (const sq of G.keyPath(k, last.piece)) cellAt(sq)?.classList.add('last');
+      for (const part of Q.partsOf(last)) {
+        for (const k of part.alts) for (const sq of G.keyPath(k, part.piece)) cellAt(sq)?.classList.add('last');
+      }
     }
     if (acting && !G.placement) {
       for (const el of boardEl.querySelectorAll('.piece')) {
@@ -559,10 +594,12 @@ function render() {
       for (const d of dots) cellAt(d.sq)?.classList.add('target');
     }
     if (p) {
-      for (const el of boardEl.querySelectorAll(`.piece[data-id="${p.piece}"]`)) {
-        el.classList.add('selected');
-        const cell = el.closest('.cell');
-        cell.classList.add(+cell.dataset.sq === p.active ? 'sel' : 'sel-other');
+      for (const id of p.pieces) {
+        for (const el of boardEl.querySelectorAll(`.piece[data-id="${id}"]`)) {
+          el.classList.add('selected');
+          const cell = el.closest('.cell');
+          cell.classList.add(id === p.piece && +cell.dataset.sq === p.active ? 'sel' : 'sel-other');
+        }
       }
       p.alts.forEach((a, i) => {
         const path = altPath(a);
@@ -585,7 +622,9 @@ function render() {
     });
   }
   drawOverlay(boardEl, lines, dots, rings, ghostLinks(sum));
-  if (p && !ui.previewing) for (const l of boardEl.querySelectorAll(`.link[data-id="${p.piece}"]`)) l.classList.add('on');
+  if (p && !ui.previewing) {
+    for (const id of p.pieces) for (const l of boardEl.querySelectorAll(`.link[data-id="${id}"]`)) l.classList.add('on');
+  }
 
   renderStrips();
   renderStatus();
@@ -638,6 +677,7 @@ function renderStatus() {
     <div class="meta">
       <span class="pill">Move <b>${Math.floor(ui.game.ply / 2) + 1}</b></span>
       <span class="pill ${W > 1 ? 'quantum' : ''}" title="Every way the game could really have gone so far. Splitting adds worlds; a move that proves something removes them.">${W > 1 ? `<b>${W}</b> possible worlds` : 'No superposition'}</span>
+      ${ui.game.opts?.multi ? '<span class="pill" title="A move can name two of your pieces; in each world exactly one of them moves.">Two-piece moves</span>' : ''}
       <button class="btn small" id="tlOpen">${W > 1 ? 'See the worlds' : 'Replay'}</button>
     </div>
     ${res ? `<div class="result"><strong>${esc(resultText(res))}</strong>
@@ -707,7 +747,7 @@ function renderRoom() {
           if (ui.mode === 'online') renderRoom();
         }, 2500);
       } catch {
-        prompt('Copy this link:', link);
+        ask({ title: 'Copy this link', text: 'Send it to your friend so they can join.', value: link, yes: 'Done', no: null });
       }
     };
   }
@@ -751,26 +791,35 @@ function renderPlan() {
       ? `<p class="hint">Click a square, then <b>click it again</b> to place a disc there.</p>
          <p class="hint"><b class="q">Split:</b> pick a second square before confirming, and the disc goes on both.</p>`
       : `<p class="hint">Click a piece, click where it should go, then <b>click that square again</b> to play.</p>
-         <p class="hint"><b class="q">Split:</b> pick a second square before confirming, and the piece goes to both.</p>`;
+         <p class="hint"><b class="q">Split:</b> pick a second square before confirming, and the piece goes to both.</p>
+         ${ui.game.opts?.multi ? '<p class="hint"><b class="q">Two pieces:</b> after picking a square, click another of your pieces and give it a move too. In each world exactly one of the two moves happens.</p>' : ''}`;
   } else {
     const W = ui.sum.W;
-    let html = `<h3>${G.placement ? 'Placing a disc' : `Moving ${esc(G.labelOf(p.piece))}`}</h3>`;
-    const info = G.placement ? null : pieceInfo(p.piece);
-    const locs = G.placement ? [[-1, W]] : [...info.locs.entries()].sort((a, b) => b[1] - a[1]);
-    for (const [sq] of locs) {
-      const mine = p.alts.map((x, i) => [x, i]).filter(([x]) => x.from === sq);
-      const rows = mine.map(([x, i]) => `<div class="pathrow"><span class="sw" style="background:${PATH_COLORS[i % PATH_COLORS.length]}"></span>
-          ${esc(G.isPass(x.key || '') ? 'Pass (where no move exists)' : altLabel(x))}
-          <button class="x" data-rm="${i}" aria-label="Remove">✕</button></div>${choicesHTML(x, i)}`).join('');
-      const ruled = !mine.length && p.alts.length
-        ? `<div class="ruled">Not moved from here, so this ghost disappears</div>` : '';
-      const none = !planCands(sq).length ? '<div class="ruled">No legal move from here</div>' : '';
-      html += `<div class="loc ${sq === p.active ? 'active' : ''}" data-loc="${sq}">
-        <div class="head">${sq >= 0 ? `From ${G.sqName(sq)}` : 'New disc'}</div>
-        ${rows || none ? `<div class="paths">${rows}${none}</div>` : ''}${ruled}</div>`;
+    const two = p.pieces.length > 1;
+    let html = `<h3>${G.placement ? 'Placing a disc' : `Moving ${p.pieces.map((id) => esc(G.labelOf(id))).join(' or ')}`}</h3>`;
+    if (two) html += '<p class="hint"><b class="q">Two-piece move:</b> in each world exactly one of these moves happens.</p>';
+    for (const id of p.pieces) {
+      const info = G.placement ? null : pieceInfo(id);
+      const locs = G.placement ? [[-1, W]] : [...info.locs.entries()].sort((a, b) => b[1] - a[1]);
+      for (const [sq] of locs) {
+        const mine = p.alts.map((x, i) => [x, i]).filter(([x]) => x.piece === id && x.from === sq);
+        const rows = mine.map(([x, i]) => `<div class="pathrow"><span class="sw" style="background:${PATH_COLORS[i % PATH_COLORS.length]}"></span>
+            ${esc(G.isPass(x.key || '') ? 'Pass (where no move exists)' : altLabel(x))}
+            <button class="x" data-rm="${i}" aria-label="Remove">✕</button></div>${choicesHTML(x, i)}`).join('');
+        // In a two-piece move a ghost left unmoved can survive through the other piece's move.
+        const ruled = !two && !mine.length && p.alts.length
+          ? `<div class="ruled">Not moved from here, so this ghost disappears</div>` : '';
+        const none = !planCands(sq, id).length ? '<div class="ruled">No legal move from here</div>' : '';
+        html += `<div class="loc ${id === p.piece && sq === p.active ? 'active' : ''}" data-loc="${sq}" data-piece="${id}">
+          <div class="head">${sq >= 0 ? `${two ? `${esc(G.labelOf(id))} from` : 'From'} ${G.sqName(sq)}` : 'New disc'}</div>
+          ${rows || none ? `<div class="paths">${rows}${none}</div>` : ''}${ruled}</div>`;
+      }
+      if (!two && info && info.alive < W && p.alts.length) {
+        html += `<div class="ruled">${esc(G.labelOf(id))} might have been captured; moving it proves it wasn't.</div>`;
+      }
     }
-    if (info && info.alive < W && p.alts.length) {
-      html += `<div class="ruled">${esc(G.labelOf(p.piece))} might have been captured; moving it proves it wasn't.</div>`;
+    if (!two && canAddPiece(-1)) {
+      html += '<p class="hint"><b class="q">Two pieces:</b> click another of your pieces to give it a move too. In each world exactly one of the two moves happens.</p>';
     }
     if (hasPassOption()) {
       const passing = p.alts.some((a) => G.isPass(a.key || ''));
@@ -781,7 +830,7 @@ function renderPlan() {
     if (pv && !pv.ok) html += `<p class="err">${esc(pv.error)}</p>`;
     if (pv?.ok) {
       const W2 = pv.state.worlds.length;
-      const split = p.alts.some((x, i) => p.alts.findIndex((y) => y.from === x.from) !== i);
+      const split = two || planSplits();
       if (W2 !== W) html += `<p class="summary">${split && W2 > W ? 'Splits' : 'Collapses'} the board: <b>${W}</b> → <b>${W2}</b> possible world${W2 === 1 ? '' : 's'}</p>`;
       if (pv.effects.length) html += `<ul class="effects">${pv.effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`;
       if (pv.state.result) html += `<p class="summary"><b>${esc(resultText(pv.state.result))}</b></p>`;
@@ -804,11 +853,13 @@ function wirePlanControls(el) {
       e.stopPropagation();
       ui.plan.alts.splice(+b.dataset.rm, 1);
       ui.plan.cur = -1;
+      prunePieces();
       afterPlanChange();
     };
   }
   for (const d of el.querySelectorAll('[data-loc]')) {
     d.onclick = () => {
+      ui.plan.piece = +d.dataset.piece;
       ui.plan.active = +d.dataset.loc;
       ui.plan.cur = -1;
       render();
@@ -837,7 +888,7 @@ function wirePlanControls(el) {
     pass.onchange = () => {
       const p = ui.plan;
       const i = p.alts.findIndex((a) => G.isPass(a.key || ''));
-      if (pass.checked && i < 0) p.alts.push({ from: p.active, seq: [], key: 'pass' });
+      if (pass.checked && i < 0) p.alts.push({ piece: p.piece, from: p.active, seq: [], key: 'pass' });
       else if (!pass.checked && i >= 0) p.alts.splice(i, 1);
       p.cur = -1;
       afterPlanChange();
@@ -877,7 +928,7 @@ function renderActionBar() {
   document.body.classList.toggle('has-bar', show);
   if (!show) return;
   const pv = ui.preview;
-  const label = G.placement ? 'New disc' : G.labelOf(p.piece);
+  const label = G.placement ? 'New disc' : p.pieces.map(G.labelOf).join(' or ');
   let line, extra = '';
   if (!p.alts.length) {
     line = `<b>${esc(label)}</b> selected · tap where it should go`;
@@ -923,7 +974,7 @@ function renderLog() {
 
 // Rebuilds a game from its move list, recording what each move collapsed.
 function replayWithNotes(moves) {
-  let st = Q.initialState(ui.gameId);
+  let st = Q.initialState(ui.gameId, ui.game.opts);
   const notes = [];
   for (const m of moves) {
     const r = Q.applyQuantumMove(st, m);
@@ -966,25 +1017,52 @@ function renderControls() {
     setGame(prev);
     maybeAiMove();
   });
-  on('#newBtn', () => {
-    if (ui.game.ply && !confirm('Start a new game?')) return;
+  on('#newBtn', async () => {
+    if (ui.game.ply && !(await ask({ title: 'Start a new game?', text: 'The current game will be lost.', yes: 'New game', danger: true }))) return;
     cancelAi();
     ui.history = [];
     ui.notes = [];
-    setGame(Q.initialState(ui.gameId));
+    setGame(Q.initialState(ui.gameId, ui.game.opts));
     maybeAiMove();
   });
   on('#drawBtn', () => sendNet({ t: 'offerDraw' }));
-  on('#resignBtn', () => confirm('Resign this game?') && sendNet({ t: 'resign' }));
+  on('#resignBtn', async () => {
+    if (await ask({ title: 'Resign this game?', text: 'Your opponent will win.', yes: 'Resign', danger: true })) sendNet({ t: 'resign' });
+  });
   on('#rematchBtn', () => sendNet({ t: 'rematch' }));
   on('#flipBtn', () => {
     ui.bottom = 1 - ui.bottom;
     render();
   });
-  on('#menuBtn', () => {
-    if (ui.mode === 'local' && ui.game.ply && !result() && !confirm('Leave this game?')) return;
+  on('#menuBtn', async () => {
+    if (ui.mode === 'local' && ui.game.ply && !result()
+      && !(await ask({ title: 'Leave this game?', text: 'This game isn’t saved, so it will be lost.', yes: 'Leave', danger: true }))) return;
     showLobby('home');
   });
+}
+
+// ================================================================ ask dialog
+// Themed replacement for confirm() and prompt(). Resolves true only when the
+// main button is pressed; Cancel, Esc and clicking the backdrop all give false.
+// `value` shows a read-only, pre-selected text field (for copying a link).
+function ask({ title, text = '', yes = 'OK', no = 'Cancel', danger = false, value = null }) {
+  const d = $('#askDlg'), input = $('#askInput'), yesBtn = $('#askYes'), noBtn = $('#askNo');
+  if (d.open) d.close();
+  $('#askTitle').textContent = title;
+  $('#askText').textContent = text;
+  $('#askText').hidden = !text;
+  yesBtn.textContent = yes;
+  yesBtn.classList.toggle('danger', danger);
+  noBtn.textContent = no || '';
+  noBtn.hidden = !no;
+  input.hidden = value === null;
+  input.value = value ?? '';
+  input.onclick = () => input.select();
+  d.returnValue = '';
+  d.showModal();
+  if (value !== null) input.select();
+  else (danger && no ? noBtn : yesBtn).focus();
+  return new Promise((resolve) => d.addEventListener('close', () => resolve(d.returnValue === 'yes'), { once: true }));
 }
 
 // ================================================================ timelines
@@ -1037,7 +1115,7 @@ $('#tlLast').onclick = () => ((tl.step = tl.boards.length - 1), renderTimeline()
 // it directly over WebRTC using PeerJS; PeerJS's free public server is only used
 // to introduce the two browsers. The host validates every guest action, and each
 // guest re-checks the host's move list by replaying it with the rules engine.
-const PEER_PREFIX = 'quantum-games-v3-'; // bump when rules change, so old and new clients don't meet
+const PEER_PREFIX = 'quantum-games-v4-'; // bump when rules change, so old and new clients don't meet
 const HEARTBEAT_MS = 4000;
 const TIMEOUT_MS = 15000;
 
@@ -1113,7 +1191,7 @@ function failToLobby(message) {
 const NETWORK_ERRORS = ['network', 'server-error', 'socket-error', 'socket-closed', 'disconnected', 'webrtc'];
 
 // ---------- hosting
-function startHosting(code, { color = 'random', fresh = false } = {}) {
+function startHosting(code, { color = 'random', fresh = false, opts = null } = {}) {
   teardownNet();
   net.wanted = true;
   ui.room = code;
@@ -1134,6 +1212,7 @@ function startHosting(code, { color = 'random', fresh = false } = {}) {
       try {
         room = new Room(code, {
           game: ui.gameId,
+          opts,
           saved,
           onChange: (r) => savePref(hostKey(code), { ...r.serialize(), hostToken: net.hostClient?.token }),
         });
@@ -1158,12 +1237,12 @@ function startHosting(code, { color = 'random', fresh = false } = {}) {
   peer.on('error', (err) => {
     if (net.peer !== peer) return;
     if (err.type === 'unavailable-id') {
-      if (fresh && !net.room) return startHosting(randomCode(), { color, fresh: true }); // code collision
+      if (fresh && !net.room) return startHosting(randomCode(), { color, fresh: true, opts }); // code collision
       // Another tab (or our own previous session, not yet expired) holds this game: join it as a guest.
       return startGuest(code, { canHost: !!saved });
     }
     if (NETWORK_ERRORS.includes(err.type)) {
-      if (!net.room) later(() => net.peer === peer && startHosting(code, { color, fresh }), 3000);
+      if (!net.room) later(() => net.peer === peer && startHosting(code, { color, fresh, opts }), 3000);
       return;
     }
     console.error(err);
@@ -1325,9 +1404,9 @@ function syncOnline(msg) {
   const prevMe = ui.me;
   ui.roomInfo = msg;
   ui.me = msg.you === 0 || msg.you === 1 ? msg.you : null;
-  if (msg.game !== ui.gameId) {
-    setGameId(msg.game); // the host decides which game this room plays
-    ui.game = Q.initialState(ui.gameId);
+  if (msg.game !== ui.gameId || !Q.sameOpts(msg.opts, ui.game.opts)) {
+    if (msg.game !== ui.gameId) setGameId(msg.game); // the host decides which game (and rules) this room plays
+    ui.game = Q.initialState(ui.gameId, msg.opts);
     ui.notes = [];
   }
   if (ui.mode !== 'online') enterGame('online');
@@ -1420,6 +1499,15 @@ function renderLobby() {
   $('#setupDiagram').replaceChildren(miniBoard(G, LOBBY_DIAGRAMS[ui.gameId]));
   for (const el of document.querySelectorAll('[data-color-name]')) el.textContent = G.colors[+el.dataset.colorName];
   $('#firstNote').textContent = `${G.colors[0]} moves first.`;
+  $('#multiRow').hidden = !!G.placement;
+  $('#multiOpt').checked = !!loadPref('qg-multi', false);
+}
+
+// Rule options chosen on the setup page, for a new game.
+function lobbyOpts() {
+  const multi = !G.placement && $('#multiOpt').checked;
+  savePref('qg-multi', $('#multiOpt').checked);
+  return { multi };
 }
 
 for (const tile of document.querySelectorAll('.tile[data-game]')) {
@@ -1440,7 +1528,7 @@ function cancelAi() {
   ui.aiThinking = false;
 }
 
-function askAi(game, moves, level) {
+function askAi(game, moves, level, opts) {
   const id = ++ui.aiReq;
   if (!aiWorker && !aiWorkerFailed) {
     try {
@@ -1463,11 +1551,11 @@ function askAi(game, moves, level) {
   }
   // Fallback: think on the main thread (the page pauses briefly while it does).
   const onMainThread = () => import('./shared/ai.js').then(({ chooseMove }) =>
-    new Promise((res) => setTimeout(() => res(chooseMove(Q.replay(game, moves), level)), 30)));
+    new Promise((res) => setTimeout(() => res(chooseMove(Q.replay(game, moves, opts), level)), 30)));
   if (!aiWorker) return { id, promise: onMainThread() };
   const promise = new Promise((resolve, reject) => {
     aiWaiters.set(id, { resolve, reject, fallback: () => onMainThread().then(resolve, reject) });
-    aiWorker.postMessage({ id, game, moves, level });
+    aiWorker.postMessage({ id, game, moves, level, opts });
   });
   return { id, promise };
 }
@@ -1477,7 +1565,7 @@ function maybeAiMove() {
   ui.aiThinking = true;
   render();
   const started = Date.now();
-  const { id, promise } = askAi(ui.gameId, ui.game.moves, ui.aiLevel);
+  const { id, promise } = askAi(ui.gameId, ui.game.moves, ui.aiLevel, ui.game.opts);
   promise.then((move) => {
     if (id !== ui.aiReq || ui.mode !== 'ai') return; // cancelled (undo, new game, left)
     const wait = Math.max(0, 500 - (Date.now() - started)); // don't reply instantly
@@ -1509,7 +1597,9 @@ function startAi() {
   let color = radioValue('aiColor') || '0';
   if (color === 'random') color = Math.random() < 0.5 ? '0' : '1';
   savePref('qg-ai-level', level);
+  const opts = lobbyOpts();
   showLobby();
+  ui.game = Q.initialState(ui.gameId, opts);
   ui.aiLevel = level;
   ui.aiColor = 1 - +color; // the computer plays the other side
   ui.bottom = +color; // your pieces at the bottom
@@ -1519,7 +1609,9 @@ function startAi() {
 }
 
 function startLocal() {
+  const opts = lobbyOpts();
   showLobby();
+  ui.game = Q.initialState(ui.gameId, opts);
   enterGame('local');
   render();
 }
@@ -1527,8 +1619,9 @@ function startLocal() {
 function createOnline() {
   const v = radioValue('colorPref') || 'random';
   const color = v === 'random' ? 'random' : +v;
+  const opts = lobbyOpts();
   showLobby();
-  startHosting(randomCode(), { color, fresh: true });
+  startHosting(randomCode(), { color, fresh: true, opts });
 }
 
 function openRoom(code) {
@@ -1600,7 +1693,7 @@ boardEl.addEventListener('pointerout', (e) => {
   const el = e.target.closest('.piece');
   if (!el) return;
   for (const g of boardEl.querySelectorAll('.piece.linked')) g.classList.remove('linked');
-  for (const l of boardEl.querySelectorAll('.link.on')) l.classList.toggle('on', +l.dataset.id === ui.plan?.piece);
+  for (const l of boardEl.querySelectorAll('.link.on')) l.classList.toggle('on', !!ui.plan?.pieces.includes(+l.dataset.id));
 });
 document.addEventListener('keydown', (e) => {
   if (ui.mode === null || e.target.closest?.('dialog, input, select, textarea')) return;

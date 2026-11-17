@@ -10,7 +10,7 @@
 //   planned: [[r, c]], dots: [[r, c]], rings: [[r, c]], gone: [[r, c]],
 // }
 
-const CYAN = '#1f5fff', PINK = '#ff3d9a', WHITE = '#17141f'; // blue and pink inks; plain arrows are ink-black
+const CYAN = '#3461d1', PINK = '#e9558f', WHITE = '#1c1a28'; // blue and pink inks; plain arrows are ink-black
 const half = { ghost: 'a' }; // one of the two places a split piece might be
 
 // Shared "how to move" and "winning" slides, worded per game.
@@ -105,7 +105,7 @@ const CHESS = (() => {
       text: 'All the normal rules: every piece moves as usual, including <b>castling</b>, <b>en passant</b> and <b>promotion</b>. You may never leave your own king in check.',
       frames: [
         { label: 'Move', board: { ...crop, pieces: [[7, 6, 0, { kind: N }]], arrows: [{ path: [[7, 6], [5, 5]] }, { path: [[7, 6], [5, 7]] }] } },
-        { label: 'Check', board: { rows: [4, 7], cols: [1, 4], pieces: [[7, 4, 0, { kind: K }], [4, 4, 1, { kind: R }]], arrows: [{ path: [[4, 4], [6, 4]], dashed: true, color: '#e0202a' }] } },
+        { label: 'Check', board: { rows: [4, 7], cols: [1, 4], pieces: [[7, 4, 0, { kind: K }], [4, 4, 1, { kind: R }]], arrows: [{ path: [[4, 4], [6, 4]], dashed: true, color: '#cc3b3b' }] } },
       ],
     },
     {
@@ -145,7 +145,7 @@ const CHESS = (() => {
       title: 'Check across worlds',
       text: 'Your king may be in check in <b>some</b> worlds and safe in others (its square glows red). A move that leaves it in check somewhere rules those worlds out. Checkmate is when you have no legal move in any world and are in check in at least one of them.',
       frames: [
-        { label: 'Check, if the queen is on e4', board: { rows: [4, 7], cols: [1, 5], pieces: [[7, 4, 0, { kind: K }], [4, 4, 1, { kind: Q, ...half }], [4, 2, 1, { kind: Q, ...half }]], arrows: [{ path: [[4, 4], [6, 4]], dashed: true, color: '#e0202a' }] } },
+        { label: 'Check, if the queen is on e4', board: { rows: [4, 7], cols: [1, 5], pieces: [[7, 4, 0, { kind: K }], [4, 4, 1, { kind: Q, ...half }], [4, 2, 1, { kind: Q, ...half }]], arrows: [{ path: [[4, 4], [6, 4]], dashed: true, color: '#cc3b3b' }] } },
         { label: 'Stepping aside keeps both', board: { rows: [4, 7], cols: [1, 5], pieces: [[7, 5, 0, { kind: K }], [4, 4, 1, { kind: Q, ...half }], [4, 2, 1, { kind: Q, ...half }]], arrows: [{ path: [[7, 4], [7, 5]], color: CYAN }] } },
       ],
     },
@@ -330,14 +330,14 @@ function timelineDiagram() {
   const wrap = el('div', 'tl-diagram');
   wrap.innerHTML = `
     <svg viewBox="0 0 300 120" role="img" aria-label="One game splits into several worlds; one surviving timeline is highlighted">
-      <g stroke="#a39c8c" stroke-width="3" fill="none" stroke-linecap="round">
+      <g stroke="#b1a792" stroke-width="3" fill="none" stroke-linecap="round">
         <path d="M20 60 H80 C110 60 110 25 140 25 H200"/>
         <path d="M80 60 C110 60 110 95 140 95 H170"/>
         <path d="M140 25 C165 25 165 5 190 5"/>
       </g>
       <path d="M20 60 H80 C110 60 110 25 140 25 H280" stroke="${CYAN}" stroke-width="4" fill="none" stroke-linecap="round"/>
-      <g fill="#a39c8c"><circle cx="170" cy="95" r="6"/><circle cx="190" cy="5" r="5"/></g>
-      <g font-size="13" font-weight="700" fill="#645d70" font-family="system-ui, sans-serif">
+      <g fill="#b1a792"><circle cx="170" cy="95" r="6"/><circle cx="190" cy="5" r="5"/></g>
+      <g font-size="13" font-weight="700" fill="#6a6274" font-family="system-ui, sans-serif">
         <text x="150" y="112">ruled out</text>
       </g>
       <circle cx="20" cy="60" r="7" fill="${CYAN}"/>

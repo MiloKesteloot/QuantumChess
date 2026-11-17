@@ -56,7 +56,8 @@ export function generateMoves(state) {
 }
 
 // Applies each candidate, drops the illegal / too-expensive ones, and adds up to
-// `splits` split moves built from pairs of the best-looking single moves.
+// `splits` split moves (and two-piece moves, when the game allows them) built
+// from pairs of the best-looking single moves.
 function expand(state, splits) {
   const g = gameOf(state.game);
   const color = state.turn;
@@ -81,8 +82,13 @@ function expand(state, splits) {
     for (let i = 0; i < pool.length && made < splits; i++) {
       for (let j = i + 1; j < pool.length && made < splits; j++) {
         const a = pool[i].move, b = pool[j].move;
-        if (a.piece !== b.piece || a.from !== b.from) continue;
-        if (tryMove({ piece: a.piece, alts: [a.alts[0], b.alts[0]] })) made++;
+        if (a.piece === b.piece) {
+          if (a.from !== b.from) continue;
+          if (tryMove({ piece: a.piece, alts: [a.alts[0], b.alts[0]] })) made++;
+        } else if (state.opts?.multi) {
+          // A two-piece move: one of the two happens in each world.
+          if (tryMove({ piece: a.piece, alts: a.alts, also: { piece: b.piece, alts: b.alts } })) made++;
+        }
       }
     }
   }
@@ -149,4 +155,4 @@ export function chooseMove(state, level = 'medium', random = Math.random) {
   return strip(pool[Math.floor(random() * pool.length)].move);
 }
 
-const strip = (m) => ({ piece: m.piece, alts: m.alts });
+const strip = (m) => (m.also ? { piece: m.piece, alts: m.alts, also: m.also } : { piece: m.piece, alts: m.alts });

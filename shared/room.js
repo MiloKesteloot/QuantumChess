@@ -4,7 +4,7 @@
 //
 // A client is any object with: send(msg), isOpen(), and a `token` property
 // that the room sets when the client joins.
-import { initialState, applyQuantumMove, replay } from './quantum.js';
+import { initialState, applyQuantumMove, replay, normalizeOpts } from './quantum.js';
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -25,19 +25,20 @@ export function normalizeCode(code) {
 }
 
 export class Room {
-  constructor(code, { game = 'checkers', saved = null, onChange = () => {} } = {}) {
+  constructor(code, { game = 'checkers', opts = null, saved = null, onChange = () => {} } = {}) {
     this.code = code;
     this.clients = new Set();
     this.onChange = onChange;
     this.tokens = [null, null]; // tokens[color] identifies the player in that seat
     this.game = saved ? saved.game : game;
-    this.state = initialState(this.game);
+    this.opts = normalizeOpts(this.game, saved ? saved.opts : opts); // rule options, fixed for the room
+    this.state = initialState(this.game, this.opts);
     this.result = null; // resign / agreed draw; engine results live in state.result
     this.drawOffer = null;
     this.rematch = [false, false];
     if (saved) {
       this.tokens = saved.tokens;
-      this.state = replay(this.game, saved.moves);
+      this.state = replay(this.game, saved.moves, this.opts);
       this.result = saved.result;
       this.drawOffer = saved.drawOffer;
       this.rematch = saved.rematch;
@@ -48,6 +49,7 @@ export class Room {
     return {
       code: this.code,
       game: this.game,
+      opts: this.opts,
       tokens: this.tokens,
       moves: this.state.moves,
       result: this.result,
@@ -129,7 +131,7 @@ export class Room {
         this.rematch[seat] = true;
         if (this.rematch[0] && this.rematch[1]) {
           this.tokens.reverse(); // swap colors
-          this.state = initialState(this.game);
+          this.state = initialState(this.game, this.opts);
           this.result = null;
           this.drawOffer = null;
           this.rematch = [false, false];
@@ -155,6 +157,7 @@ export class Room {
         t: 'state',
         room: this.code,
         game: this.game,
+        opts: this.opts,
         you: seat >= 0 ? seat : null,
         moves: this.state.moves,
         result: this.result || this.state.result,

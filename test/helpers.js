@@ -75,13 +75,21 @@ export function randomQuantumMove(state, rand) {
     if (o !== first && keys.length && rand() < 0.6) alts.push(pick(keys, rand));
     if (o === first && keys.length && rand() < 0.35) alts.push(pick(keys.filter((k) => !g.isPass(k)), rand) || keys[0]);
   }
-  return { piece, alts: [...new Set(alts)] };
+  const move = { piece, alts: [...new Set(alts)] };
+  // Two-piece moves (when the game allows them): one move each for two pieces, no split.
+  if (state.opts?.multi && pieces.length > 1 && rand() < 0.3) {
+    const other = pick(pieces.filter((p) => p !== piece), rand);
+    const otherOrigins = [...all.get(other).keys()];
+    const otherAlt = pick(all.get(other).get(pick(otherOrigins, rand)), rand).m.key;
+    return { piece, alts: [alts[0]], also: { piece: other, alts: [otherAlt] } };
+  }
+  return move;
 }
 
 // Plays random quantum moves (falling back to a plain classical move) for up to `plies`.
-export function randomGame(gameId, seed, plies) {
+export function randomGame(gameId, seed, plies, opts = null) {
   const rand = rng(seed);
-  let s = Q.initialState(gameId);
+  let s = Q.initialState(gameId, opts);
   let maxWorlds = 1;
   for (let i = 0; i < plies && !s.result; i++) {
     let applied = false;

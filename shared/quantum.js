@@ -24,15 +24,29 @@ import { gameOf } from './games/index.js';
 export const MAX_WORLDS = 512;
 export const MAX_LOCATIONS = 4; // a single piece may be in at most this many places
 
-export function initialState(gameId) {
+// Game options, fixed when a game starts:
+//   multi: a move may name a second piece ("two-piece move"): in each world
+//          exactly one of the two pieces makes its move.
+export function normalizeOpts(gameId, opts) {
+  return { multi: !!opts?.multi && !gameOf(gameId).placement };
+}
+export const sameOpts = (a, b) => !!a?.multi === !!b?.multi;
+
+export function initialState(gameId, opts = null) {
   const g = gameOf(gameId);
-  return { game: gameId, worlds: [{ b: g.initialBoard(), h: null, q: 0 }], turn: 0, ply: 0, moves: [], result: null };
+  return {
+    game: gameId, opts: normalizeOpts(gameId, opts),
+    worlds: [{ b: g.initialBoard(), h: null, q: 0 }], turn: 0, ply: 0, moves: [], result: null,
+  };
 }
 
 // For tests and puzzles: a state built from explicit boards.
-export function stateFromBoards(gameId, boards, turn = 0) {
-  return { game: gameId, worlds: boards.map((b) => ({ b, h: null, q: 0 })), turn, ply: 0, moves: [], result: null };
+export function stateFromBoards(gameId, boards, turn = 0, opts = null) {
+  return { game: gameId, opts: normalizeOpts(gameId, opts), worlds: boards.map((b) => ({ b, h: null, q: 0 })), turn, ply: 0, moves: [], result: null };
 }
+
+// The parts of a quantum move: [{ piece, alts }], one or two of them.
+export const partsOf = (move) => (move.also ? [{ piece: move.piece, alts: move.alts }, move.also] : [{ piece: move.piece, alts: move.alts }]);
 
 const KEY_RE = /^[A-Za-z0-9=x-]{1,40}$/;
 
@@ -51,9 +65,21 @@ function canMove(g, b, color) {
   return g.canMove(b, color);
 }
 
-function validateShape(move) {
+function validateShape(move, opts) {
   if (!move || typeof move !== 'object') return 'Malformed move.';
-  const { piece, alts } = move;
+  const err = validatePart(move);
+  if (err) return err;
+  if (move.also === undefined || move.also === null) return null;
+  if (!opts?.multi) return 'Two-piece moves are turned off in this game.';
+  const err2 = validatePart(move.also);
+  if (err2) return err2;
+  if (move.also.piece === move.piece || !move.piece) return 'A two-piece move needs two different pieces.';
+  return null;
+}
+
+function validatePart(part) {
+  if (!part || typeof part !== 'object') return 'Malformed move.';
+  const { piece, alts } = part;
   if (!Number.isInteger(piece) || piece < 0 || piece > 64) return 'Malformed move: bad piece.';
   if (!Array.isArray(alts) || alts.length < 1 || alts.length > 2 * MAX_LOCATIONS + 1) return 'Malformed move: bad alternatives.';
   const seen = new Set();
@@ -80,35 +106,43 @@ function locationsOf(g, worlds, piece) {
   return locs;
 }
 
-// A quantum move: { piece, alts }. Each alternative is the key of a classical
-// move of that piece. In every world, the piece takes all the alternatives that
-// are legal there (two from the same place is a split). Worlds where none is
-// legal are ruled out. Returns { ok: true, state } or { ok: false, error }.
+// A quantum move: { piece, alts, also? }. Each alternative is the key of a
+// classical move of that piece. In every world, the piece takes all the
+// alternatives that are legal there (two from the same place is a split).
+// Worlds where none is legal are ruled out.
+//
+// With two-piece moves on, `also: { piece, alts }` names a second piece. Each
+// world then branches into every legal alternative of either piece, so in each
+// resulting world exactly one of the two pieces moved. A two-piece move may not
+// also split a piece: one split per move at most.
+// Returns { ok: true, state } or { ok: false, error }.
 export function applyQuantumMove(state, move) {
   if (state.result) return { ok: false, error: 'The game is over.' };
-  const shapeErr = validateShape(move);
+  const shapeErr = validateShape(move, state.opts);
   if (shapeErr) return { ok: false, error: shapeErr };
   const g = gameOf(state.game);
-  const { piece } = move;
-  const alts = new Set(move.alts);
+  const parts = partsOf(move);
+  const altsOf = new Map(parts.map((p) => [p.piece, new Set(p.alts)]));
   const color = state.turn;
 
   const used = new Set();
-  const perOrigin = new Map();
+  const perOrigin = new Map(); // "piece:origin" -> keys taken from there
   const next = [];
   const seen = new Set();
   const keysOf = g.keysOf || ((m) => [m.key]);
   for (const w of state.worlds) {
     for (const m of legalMoves(g, w.b, color)) {
-      if (m.piece !== piece) continue;
+      const alts = altsOf.get(m.piece);
+      if (!alts) continue;
       const hits = keysOf(m).filter((k) => alts.has(k));
       if (!hits.length) continue;
       for (const k of hits) {
-        used.add(k);
+        used.add(`${m.piece}:${k}`);
         if (g.isPass(k)) continue;
-        const set = perOrigin.get(m.from) || new Set();
+        const o = `${m.piece}:${m.from}`;
+        const set = perOrigin.get(o) || new Set();
         set.add(k);
-        perOrigin.set(m.from, set);
+        perOrigin.set(o, set);
       }
       const nb = g.apply(w.b, m);
       const key = g.boardKey(nb);
@@ -119,17 +153,31 @@ export function applyQuantumMove(state, move) {
   }
 
   if (!next.length) return { ok: false, error: 'That move is impossible in every possible world.' };
-  for (const k of move.alts) {
-    if (!used.has(k)) return { ok: false, error: `${g.fmtAlt(k)} is not legal in any world.` };
+  for (const p of parts) {
+    for (const k of p.alts) {
+      if (!used.has(`${p.piece}:${k}`)) {
+        return { ok: false, error: `${parts.length > 1 ? g.labelOf(p.piece) + ' ' : ''}${g.fmtAlt(k)} is not legal in any world.` };
+      }
+    }
   }
+  const maxPerOrigin = parts.length > 1 ? 1 : 2;
   for (const set of perOrigin.values()) {
-    if (set.size > 2) return { ok: false, error: 'A piece can split into at most two moves from one place.' };
+    if (set.size > maxPerOrigin) {
+      return {
+        ok: false,
+        error: parts.length > 1
+          ? 'A two-piece move cannot also split a piece: one split per move.'
+          : 'A piece can split into at most two moves from one place.',
+      };
+    }
   }
   if (next.length > MAX_WORLDS) {
     return { ok: false, error: `Too much superposition (${next.length} worlds, max ${MAX_WORLDS}).` };
   }
-  if (locationsOf(g, next, piece).size > MAX_LOCATIONS) {
-    return { ok: false, error: `A piece can be in at most ${MAX_LOCATIONS} places at once.` };
+  for (const p of parts) {
+    if (locationsOf(g, next, p.piece).size > MAX_LOCATIONS) {
+      return { ok: false, error: `A piece can be in at most ${MAX_LOCATIONS} places at once.` };
+    }
   }
 
   const opp = 1 - color;
@@ -152,15 +200,16 @@ export function applyQuantumMove(state, move) {
   } else if (g.drawQuietPlies && next.every((w) => w.q >= g.drawQuietPlies)) {
     result = { winner: null, reason: 'quiet' };
   }
-  const moveCopy = { piece, alts: [...move.alts] };
+  const moveCopy = { piece: move.piece, alts: [...move.alts] };
+  if (move.also) moveCopy.also = { piece: move.also.piece, alts: [...move.also.alts] };
   return {
     ok: true,
-    state: { game: state.game, worlds: next, turn: opp, ply: state.ply + 1, moves: [...state.moves, moveCopy], result },
+    state: { game: state.game, opts: state.opts, worlds: next, turn: opp, ply: state.ply + 1, moves: [...state.moves, moveCopy], result },
   };
 }
 
-export function replay(gameId, moves) {
-  let s = initialState(gameId);
+export function replay(gameId, moves, opts = null) {
+  let s = initialState(gameId, opts);
   for (const m of moves) {
     const r = applyQuantumMove(s, m);
     if (!r.ok) throw new Error(`Replay failed at ply ${s.ply}: ${r.error}`);
@@ -238,16 +287,19 @@ export function timeline(world) {
   return out.reverse();
 }
 
+// A two-piece move reads "♕d1 d1-d4 | ♖a1 a1-a3": one or the other happened.
 export function fmtMove(gameId, move) {
   const g = gameOf(gameId);
-  const groups = new Map();
-  for (const k of move.alts) {
-    const o = g.isPass(k) ? 'pass' : g.keyOrigin(k, move.piece);
-    if (!groups.has(o)) groups.set(o, []);
-    groups.get(o).push(g.fmtAlt(k));
-  }
-  const body = [...groups.values()].map((x) => x.join(' | ')).join(' & ');
-  return move.piece ? `${g.labelOf(move.piece)} ${body}` : body;
+  return partsOf(move).map(({ piece, alts }) => {
+    const groups = new Map();
+    for (const k of alts) {
+      const o = g.isPass(k) ? 'pass' : g.keyOrigin(k, piece);
+      if (!groups.has(o)) groups.set(o, []);
+      groups.get(o).push(g.fmtAlt(k));
+    }
+    const body = [...groups.values()].map((x) => x.join(' | ')).join(' & ');
+    return piece ? `${g.labelOf(piece)} ${body}` : body;
+  }).join(' | ');
 }
 
 // Human-readable list of what a move did to the *other* pieces. If `move` is
@@ -257,7 +309,20 @@ export function describeChange(before, after, movingPiece, move = null) {
   const sb = summarize(before), sa = summarize(after);
   const out = [];
   const absent = g.absentWord || 'captured';
-  if (move && movingPiece) {
+  const moving = new Set(move ? partsOf(move).map((p) => p.piece) : [movingPiece]);
+  if (move?.also) {
+    // Two pieces moved, one per world. A ghost of either piece was ruled out
+    // when none of the worlds it was in survived the move.
+    const kept = new Set(after.worlds.map((w) => w.h?.prev));
+    const sk = summarize({ game: before.game, worlds: before.worlds.filter((w) => kept.has(w.h)) });
+    for (const id of moving) {
+      const mb = sb.pieces.get(id), mk = sk.pieces.get(id);
+      if (!mb || !mk) continue;
+      const ruled = [...mb.locs.keys()].filter((x) => !mk.locs.has(x)).map(g.sqName);
+      if (ruled.length) out.push(`${g.labelOf(id)} was not on ${ruled.join(' or ')}`);
+      if (mb.alive < sb.W && mk.alive === sk.W) out.push(`${g.labelOf(id)} was not ${absent}`);
+    }
+  } else if (move && movingPiece) {
     const origins = new Set(move.alts.filter((k) => !g.isPass(k)).map((k) => g.keyOrigin(k, movingPiece)));
     const mp = sb.pieces.get(movingPiece);
     if (mp) {
@@ -281,7 +346,7 @@ export function describeChange(before, after, movingPiece, move = null) {
   const fmt = (s) => [...s].map((x) => (x === '\0' ? absent : x)).join(' / ');
   const ids = new Set([...sb.pieces.keys(), ...sa.pieces.keys()]);
   for (const id of [...ids].sort((a, b) => a - b)) {
-    if (id === movingPiece) continue;
+    if (moving.has(id)) continue;
     const s0 = states(sb, id), s1 = states(sa, id);
     if (s0.size === s1.size && [...s0].every((x) => s1.has(x))) continue;
     // One certain state to another certain state (a reversi flip in every world) is not quantum news.
